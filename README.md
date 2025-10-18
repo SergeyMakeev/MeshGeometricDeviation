@@ -20,6 +20,7 @@ A high-performance C++ library for computing geometric deviations between 3D tri
 ### Library Architecture
 - **Header-only compatible** - Easy integration
 - **Namespace isolation** - `MeshGeometricDeviation::`
+- **Configurable logging** - Printf-style with severity levels (Debug/Info/Warning/Error)
 - **Modern C++17** - Clean, maintainable code
 - **Cross-platform** - Windows, Linux, macOS
 - **CMake-based** - Standard build system with proper installation
@@ -171,6 +172,44 @@ void computeVertexNormals(Mesh& mesh);  // Compute area-weighted vertex normals
 ```
 
 Vertex normals are automatically computed from adjacent face normals using area-weighted averaging. This enables the vertex normal variance metric that measures angular differences between surface orientations.
+
+### Logging Control
+
+```cpp
+// Log severity levels
+enum class LogLevel {
+    Debug = 0,    // Detailed diagnostic information (timing, stats)
+    Info = 1,     // General informational messages (default)
+    Warning = 2,  // Warning messages
+    Error = 3,    // Error messages  
+    Silent = 4    // No logging
+};
+
+// Set minimum log level (filters out messages below this level)
+void setLogLevel(LogLevel level);
+
+// Set custom log callback for redirection
+typedef void (*LogCallback)(LogLevel level, const char* message);
+void setLogCallback(LogCallback callback);
+```
+
+**Examples:**
+```cpp
+// Show only important results (hide timing/debug info)
+setLogLevel(LogLevel::Info);  // Default
+
+// Show detailed timing and diagnostic info
+setLogLevel(LogLevel::Debug);
+
+// Suppress all library output
+setLogLevel(LogLevel::Silent);
+
+// Custom log handler (e.g., write to file)
+void myLogger(LogLevel level, const char* message) {
+    fprintf(myFile, "[%d] %s", static_cast<int>(level), message);
+}
+setLogCallback(myLogger);
+```
 
 ### Mesh Comparison
 

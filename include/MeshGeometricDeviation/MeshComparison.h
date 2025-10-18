@@ -3,8 +3,33 @@
 #include "SpatialDb.h"
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace MeshGeometricDeviation {
+
+// Log severity levels
+enum class LogLevel {
+    Debug = 0,    // Detailed diagnostic information
+    Info = 1,     // General informational messages
+    Warning = 2,  // Warning messages
+    Error = 3,    // Error messages
+    Silent = 4    // No logging
+};
+
+// Logging function type - printf-style callback with severity level
+typedef void (*LogCallback)(LogLevel level, const char* message);
+
+// Set custom log callback (pass nullptr to use default stdout logging)
+void setLogCallback(LogCallback callback);
+
+// Set minimum log level (messages below this level are filtered out)
+void setLogLevel(LogLevel level);
+
+// Get current log level
+LogLevel getLogLevel();
+
+// Internal log function (used by library, printf-style)
+void log(LogLevel level, const char* format, ...);
 
 // Mesh structures
 struct Vertex

@@ -6,11 +6,65 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <cstdarg>
+#include <cstdio>
 
 #define FAST_OBJ_IMPLEMENTATION
 #include "fast_obj.h"
 
 namespace MeshGeometricDeviation {
+
+// Global log callback and log level settings
+static LogCallback g_logCallback = nullptr;
+static LogLevel g_logLevel = LogLevel::Info;
+
+// Default log function (prints to stdout with level prefix)
+static void defaultLogCallback(LogLevel level, const char* message) {
+    const char* levelStr = "";
+    switch (level) {
+        case LogLevel::Debug:   levelStr = "[DEBUG] "; break;
+        case LogLevel::Info:    levelStr = ""; break;  // No prefix for info
+        case LogLevel::Warning: levelStr = "[WARNING] "; break;
+        case LogLevel::Error:   levelStr = "[ERROR] "; break;
+        default: break;
+    }
+    std::printf("%s%s", levelStr, message);
+}
+
+// Set custom log callback
+void setLogCallback(LogCallback callback) {
+    g_logCallback = callback;
+}
+
+// Set minimum log level
+void setLogLevel(LogLevel level) {
+    g_logLevel = level;
+}
+
+// Get current log level
+LogLevel getLogLevel() {
+    return g_logLevel;
+}
+
+// Internal log function (printf-style with level filtering)
+void log(LogLevel level, const char* format, ...) {
+    // Filter out messages below current log level
+    if (level < g_logLevel) {
+        return;
+    }
+    
+    if (g_logCallback == nullptr) {
+        g_logCallback = defaultLogCallback;
+    }
+    
+    char buffer[4096];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    g_logCallback(level, buffer);
+}
 
 // Helper to convert Vertex to Vector3
 inline Vector3 vertexToVector3(const Vertex& v) {
@@ -150,7 +204,7 @@ static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, 
 bool loadObjFile(const std::string& filename, Mesh& mesh) {
     fastObjMesh* obj = fast_obj_read(filename.c_str());
     if (!obj) {
-        std::cerr << "Failed to load OBJ file: " << filename << std::endl;
+        log(LogLevel::Error, "Failed to load OBJ file: %s\n", filename.c_str());
         return false;
     }
 
@@ -216,10 +270,10 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
     
     fast_obj_destroy(obj);
     
-    std::cout << "Loaded mesh: " << filename << std::endl;
-    std::cout << "  Vertices: " << mesh.verts.size() << std::endl;
-    std::cout << "  Triangles: " << mesh.tris.size() << std::endl;
-    std::cout << "  UVs: " << mesh.uvs.size() - 1 << std::endl;  // -1 to exclude default UV
+    log(LogLevel::Info, "Loaded mesh: %s\n", filename.c_str());
+    log(LogLevel::Info, "  Vertices: %zu\n", mesh.verts.size());
+    log(LogLevel::Info, "  Triangles: %zu\n", mesh.tris.size());
+    log(LogLevel::Debug, "  UVs: %zu\n", mesh.uvs.size() - 1);  // -1 to exclude default UV
     
     return true;
 }
@@ -278,39 +332,39 @@ int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea) {
 DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples, 
                             double maxAngleDegrees, bool useAreaWeighting, 
                             bool useNormalFiltering, unsigned int seed) {
-    std::cout << "\n=== Comparing Meshes ===" << std::endl;
-    std::cout << "Reference mesh: " << meshA.name << " (" << meshA.tris.size() << " triangles)" << std::endl;
-    std::cout << "Test mesh: " << meshB.name << " (" << meshB.tris.size() << " triangles)" << std::endl;
-    std::cout << "Samples: " << numSamples << std::endl;
-    std::cout << "Normal filtering: " << (useNormalFiltering ? "enabled" : "disabled") << std::endl;
+    log(LogLevel::Info, "\n=== Comparing Meshes ===\n");
+    log(LogLevel::Info, "Reference mesh: %s (%zu triangles)\n", meshA.name.c_str(), meshA.tris.size());
+    log(LogLevel::Info, "Test mesh: %s (%zu triangles)\n", meshB.name.c_str(), meshB.tris.size());
+    log(LogLevel::Info, "Samples: %d\n", numSamples);
+    log(LogLevel::Info, "Normal filtering: %s\n", useNormalFiltering ? "enabled" : "disabled");
     if (useNormalFiltering) {
-        std::cout << "Normal angle threshold: " << maxAngleDegrees << " degrees" << std::endl;
+        log(LogLevel::Debug, "Normal angle threshold: %.1f degrees\n", maxAngleDegrees);
     }
-    std::cout << "Area weighting: " << (useAreaWeighting ? "enabled" : "disabled") << std::endl;
-    std::cout << "Random seed: " << seed << " (for reproducibility)" << std::endl;
+    log(LogLevel::Debug, "Area weighting: %s\n", useAreaWeighting ? "enabled" : "disabled");
+    log(LogLevel::Debug, "Random seed: %u (for reproducibility)\n", seed);
     
     // Build spatial database for meshB
-    std::cout << "\nBuilding spatial database for test mesh..." << std::endl;
+    log(LogLevel::Info, "\nBuilding spatial database for test mesh...\n");
     auto t_start_db = std::chrono::high_resolution_clock::now();
     SpatialDb spatialDb(meshB);
     auto t_end_db = std::chrono::high_resolution_clock::now();
     double time_db = std::chrono::duration<double>(t_end_db - t_start_db).count();
     
     auto stats = spatialDb.getStats();
-    std::cout << "Spatial database stats:" << std::endl;
-    std::cout << "  Total nodes: " << stats.totalNodes << std::endl;
-    std::cout << "  Leaf nodes: " << stats.leafNodes << std::endl;
-    std::cout << "  Max depth: " << stats.maxDepth << std::endl;
-    std::cout << "  Avg triangles per leaf: " << stats.avgTrisPerLeaf << std::endl;
-    std::cout << "  Build time: " << time_db << " seconds" << std::endl;
+    log(LogLevel::Debug, "Spatial database stats:\n");
+    log(LogLevel::Debug, "  Total nodes: %d\n", stats.totalNodes);
+    log(LogLevel::Debug, "  Leaf nodes: %d\n", stats.leafNodes);
+    log(LogLevel::Debug, "  Max depth: %d\n", stats.maxDepth);
+    log(LogLevel::Debug, "  Avg triangles per leaf: %.2f\n", stats.avgTrisPerLeaf);
+    log(LogLevel::Debug, "  Build time: %.6f seconds\n", time_db);
     
     // Generate samples on meshA
-    std::cout << "\nGenerating surface samples on reference mesh..." << std::endl;
+    log(LogLevel::Info, "\nGenerating surface samples on reference mesh...\n");
     auto t_start_sample = std::chrono::high_resolution_clock::now();
     std::vector<SurfaceSample> samples = generateAreaWeightedSamples(meshA, numSamples, seed);
     auto t_end_sample = std::chrono::high_resolution_clock::now();
     double time_sample = std::chrono::duration<double>(t_end_sample - t_start_sample).count();
-    std::cout << "  Sampling time: " << time_sample << " seconds" << std::endl;
+    log(LogLevel::Debug, "  Sampling time: %.6f seconds\n", time_sample);
     
     // Check if both meshes have vertex normals for normal variance computation
     bool hasVertexNormals = (!meshA.vertexNormals.empty() && !meshB.vertexNormals.empty());
@@ -319,10 +373,10 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     bool hasUVs = (meshA.uvs.size() > 1 && meshB.uvs.size() > 1);
     
     // Measure distances
-    std::cout << "\nMeasuring distances";
-    if (hasVertexNormals) std::cout << " + normal variance";
-    if (hasUVs) std::cout << " + UV variance";
-    std::cout << "..." << std::endl;
+    log(LogLevel::Info, "\nMeasuring distances");
+    if (hasVertexNormals) log(LogLevel::Info, " + normal variance");
+    if (hasUVs) log(LogLevel::Info, " + UV variance");
+    log(LogLevel::Info, "...\n");
     
     auto t_start_measure = std::chrono::high_resolution_clock::now();
     
@@ -440,8 +494,8 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     auto t_end_measure = std::chrono::high_resolution_clock::now();
     double time_measure = std::chrono::duration<double>(t_end_measure - t_start_measure).count();
     
-    std::cout << "  Measurement time: " << time_measure << " seconds" << std::endl;
-    std::cout << "  Samples/second: " << (numSamples / time_measure) << std::endl;
+    log(LogLevel::Debug, "  Measurement time: %.6f seconds\n", time_measure);
+    log(LogLevel::Debug, "  Samples/second: %.0f\n", (numSamples / time_measure));
     
     // Compute statistics
     auto t_start_stats = std::chrono::high_resolution_clock::now();
@@ -535,15 +589,15 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     auto t_end_stats = std::chrono::high_resolution_clock::now();
     double time_stats = std::chrono::duration<double>(t_end_stats - t_start_stats).count();
     
-    std::cout << "  Statistics time: " << time_stats << " seconds" << std::endl;
+    log(LogLevel::Debug, "  Statistics time: %.6f seconds\n", time_stats);
     
     // Total time
     double time_total = time_db + time_sample + time_measure + time_stats;
-    std::cout << "\nTotal comparison time: " << time_total << " seconds" << std::endl;
-    std::cout << "  KD-tree build: " << (time_db / time_total * 100) << "%" << std::endl;
-    std::cout << "  Sampling:      " << (time_sample / time_total * 100) << "%" << std::endl;
-    std::cout << "  Measurement:   " << (time_measure / time_total * 100) << "%" << std::endl;
-    std::cout << "  Statistics:    " << (time_stats / time_total * 100) << "%" << std::endl;
+    log(LogLevel::Info, "\nTotal comparison time: %.6f seconds\n", time_total);
+    log(LogLevel::Debug, "  KD-tree build: %.2f%%\n", (time_db / time_total * 100));
+    log(LogLevel::Debug, "  Sampling:      %.2f%%\n", (time_sample / time_total * 100));
+    log(LogLevel::Debug, "  Measurement:   %.2f%%\n", (time_measure / time_total * 100));
+    log(LogLevel::Debug, "  Statistics:    %.2f%%\n", (time_stats / time_total * 100));
     
     return devianceStats;
 }
@@ -556,15 +610,15 @@ BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const M
                                                        unsigned int baseSeed) {
     BidirectionalDevianceStats biStats;
     
-    std::cout << "\n=== Bidirectional Mesh Comparison ===" << std::endl;
-    std::cout << "This compares in both directions to detect missing/extra geometry" << std::endl;
+    log(LogLevel::Info, "\n=== Bidirectional Mesh Comparison ===\n");
+    log(LogLevel::Info, "This compares in both directions to detect missing/extra geometry\n");
     
     // Direction 1: A -> B (reference to test)
-    std::cout << "\n--- Direction 1: Reference (A) -> Test (B) ---" << std::endl;
+    log(LogLevel::Info, "\n--- Direction 1: Reference (A) -> Test (B) ---\n");
     biStats.aToB = compareMeshes(meshA, meshB, numSamplesA, maxAngleDegrees, useAreaWeighting, useNormalFiltering, baseSeed);
     
     // Direction 2: B -> A (test to reference)
-    std::cout << "\n--- Direction 2: Test (B) -> Reference (A) ---" << std::endl;
+    log(LogLevel::Info, "\n--- Direction 2: Test (B) -> Reference (A) ---\n");
     biStats.bToA = compareMeshes(meshB, meshA, numSamplesB, maxAngleDegrees, useAreaWeighting, useNormalFiltering, baseSeed + 1);
     
     // Compute overall statistics
@@ -595,136 +649,141 @@ BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const M
 
 // Print deviance statistics
 void printDevianceStats(const DevianceStats& stats, bool showNormalStats) {
-    std::cout << "\n=== Deviance Statistics ===" << std::endl;
-    std::cout << "Min deviance:     " << stats.minDeviance << std::endl;
-    std::cout << "Max deviance:     " << stats.maxDeviance << std::endl;
-    std::cout << "Average deviance: " << stats.averageDeviance << std::endl;
-    std::cout << "Median deviance:  " << stats.medianDeviance << std::endl;
-    std::cout << "RMSD:             " << stats.rmsd << std::endl;
+    log(LogLevel::Info, "\n=== Deviance Statistics ===\n");
+    log(LogLevel::Info, "Min deviance:     %g\n", stats.minDeviance);
+    log(LogLevel::Info, "Max deviance:     %g\n", stats.maxDeviance);
+    log(LogLevel::Info, "Average deviance: %g\n", stats.averageDeviance);
+    log(LogLevel::Info, "Median deviance:  %g\n", stats.medianDeviance);
+    log(LogLevel::Info, "RMSD:             %g\n", stats.rmsd);
     
     if (showNormalStats && stats.fallbackCount >= 0) {
-        std::cout << "\nNormal constraint:" << std::endl;
-        std::cout << "  Matched:  " << stats.normalMatchedCount << " samples (" 
-                  << (100.0f * stats.normalMatchedCount / stats.totalSamples) << "%)" << std::endl;
-        std::cout << "  Fallback: " << stats.fallbackCount << " samples (" 
-                  << (100.0f * stats.fallbackCount / stats.totalSamples) << "%)" << std::endl;
+        log(LogLevel::Info, "\nNormal constraint:\n");
+        log(LogLevel::Debug, "  Matched:  %d samples (%.2f%%)\n", stats.normalMatchedCount,
+            100.0f * stats.normalMatchedCount / stats.totalSamples);
+        log(LogLevel::Debug, "  Fallback: %d samples (%.2f%%)\n", stats.fallbackCount,
+            100.0f * stats.fallbackCount / stats.totalSamples);
     }
     
-    std::cout << "\nPrecision analysis:" << std::endl;
-    std::cout << "  Large deviations (>0.0001): " << stats.largeDevianceCount << " samples (" 
-              << (100.0f * stats.largeDevianceCount / stats.totalSamples) << "%)" << std::endl;
+    log(LogLevel::Info, "\nPrecision analysis:\n");
+    log(LogLevel::Debug, "  Large deviations (>0.0001): %d samples (%.2f%%)\n", stats.largeDevianceCount,
+        100.0f * stats.largeDevianceCount / stats.totalSamples);
     
     // Display normal variance if available
     if (stats.maxNormalAngleDeg > 0.0) {
-        std::cout << "\nVertex Normal Variance (interpolated):" << std::endl;
-        std::cout << "  Min angle:     " << stats.minNormalAngleDeg << " degrees" << std::endl;
-        std::cout << "  Max angle:     " << stats.maxNormalAngleDeg << " degrees" << std::endl;
-        std::cout << "  Average angle: " << stats.averageNormalAngleDeg << " degrees" << std::endl;
-        std::cout << "  Median angle:  " << stats.medianNormalAngleDeg << " degrees" << std::endl;
-        std::cout << "  Large normal deviations (>15 deg): " << stats.largeNormalDevianceCount << " samples (" 
-                  << (100.0f * stats.largeNormalDevianceCount / stats.totalSamples) << "%)" << std::endl;
+        log(LogLevel::Info, "\nVertex Normal Variance (interpolated):\n");
+        log(LogLevel::Info, "  Min angle:     %g degrees\n", stats.minNormalAngleDeg);
+        log(LogLevel::Info, "  Max angle:     %g degrees\n", stats.maxNormalAngleDeg);
+        log(LogLevel::Info, "  Average angle: %g degrees\n", stats.averageNormalAngleDeg);
+        log(LogLevel::Info, "  Median angle:  %g degrees\n", stats.medianNormalAngleDeg);
+        log(LogLevel::Info, "  Large normal deviations (>15 deg): %d samples (%.2f%%)\n", 
+            stats.largeNormalDevianceCount,
+            100.0f * stats.largeNormalDevianceCount / stats.totalSamples);
     }
     
     // Warn about self-comparison issues
     if (stats.averageDeviance > 1e-12 && stats.fallbackCount == 0) {
-        std::cout << "\nNote: If comparing identical meshes, non-zero deviance indicates numerical" << std::endl;
-        std::cout << "      precision issues in the spatial query. This is expected due to floating-" << std::endl;
-        std::cout << "      point arithmetic, especially near edges/vertices where multiple triangles meet." << std::endl;
+        log(LogLevel::Info, "\nNote: If comparing identical meshes, non-zero deviance indicates numerical\n");
+        log(LogLevel::Warning, "      precision issues in the spatial query. This is expected due to floating-\n");
+        log(LogLevel::Info, "      point arithmetic, especially near edges/vertices where multiple triangles meet.\n");
     }
 }
 
 // Print bidirectional comparison statistics
 void printBidirectionalStats(const BidirectionalDevianceStats& biStats) {
-    std::cout << "\n=== Bidirectional Comparison Results ===" << std::endl;
-    std::cout << "\nReference -> Test (A -> B):" << std::endl;
-    std::cout << "  Min deviance:     " << biStats.aToB.minDeviance << std::endl;
-    std::cout << "  Max deviance:     " << biStats.aToB.maxDeviance << std::endl;
-    std::cout << "  Average deviance: " << biStats.aToB.averageDeviance << std::endl;
-    std::cout << "  Median deviance:  " << biStats.aToB.medianDeviance << std::endl;
-    std::cout << "  RMSD:             " << biStats.aToB.rmsd << std::endl;
+    log(LogLevel::Info, "\n=== Bidirectional Comparison Results ===\n");
+    log(LogLevel::Info, "\nReference -> Test (A -> B):\n");
+    log(LogLevel::Info, "  Min deviance:     %g\n", biStats.aToB.minDeviance);
+    log(LogLevel::Info, "  Max deviance:     %g\n", biStats.aToB.maxDeviance);
+    log(LogLevel::Info, "  Average deviance: %g\n", biStats.aToB.averageDeviance);
+    log(LogLevel::Info, "  Median deviance:  %g\n", biStats.aToB.medianDeviance);
+    log(LogLevel::Info, "  RMSD:             %g\n", biStats.aToB.rmsd);
     
-    std::cout << "\nTest -> Reference (B -> A):" << std::endl;
-    std::cout << "  Min deviance:     " << biStats.bToA.minDeviance << std::endl;
-    std::cout << "  Max deviance:     " << biStats.bToA.maxDeviance << std::endl;
-    std::cout << "  Average deviance: " << biStats.bToA.averageDeviance << std::endl;
-    std::cout << "  Median deviance:  " << biStats.bToA.medianDeviance << std::endl;
-    std::cout << "  RMSD:             " << biStats.bToA.rmsd << std::endl;
+    log(LogLevel::Info, "\nTest -> Reference (B -> A):\n");
+    log(LogLevel::Info, "  Min deviance:     %g\n", biStats.bToA.minDeviance);
+    log(LogLevel::Info, "  Max deviance:     %g\n", biStats.bToA.maxDeviance);
+    log(LogLevel::Info, "  Average deviance: %g\n", biStats.bToA.averageDeviance);
+    log(LogLevel::Info, "  Median deviance:  %g\n", biStats.bToA.medianDeviance);
+    log(LogLevel::Info, "  RMSD:             %g\n", biStats.bToA.rmsd);
     
-    std::cout << "\nOverall (Symmetric Hausdorff-like):" << std::endl;
-    std::cout << "  Min deviance:     " << biStats.minDeviance << std::endl;
-    std::cout << "  Max deviance:     " << biStats.maxDeviance << std::endl;
-    std::cout << "  Average deviance: " << biStats.averageDeviance << std::endl;
-    std::cout << "  RMSD:             " << biStats.rmsd << std::endl;
+    log(LogLevel::Info, "\nOverall (Symmetric Hausdorff-like):\n");
+    log(LogLevel::Info, "  Min deviance:     %g\n", biStats.minDeviance);
+    log(LogLevel::Info, "  Max deviance:     %g\n", biStats.maxDeviance);
+    log(LogLevel::Info, "  Average deviance: %g\n", biStats.averageDeviance);
+    log(LogLevel::Info, "  RMSD:             %g\n", biStats.rmsd);
     
-    std::cout << "\nAsymmetry Analysis:" << std::endl;
+    log(LogLevel::Info, "\nAsymmetry Analysis:\n");
     if (biStats.isAsymmetric) {
-        std::cout << "  Status: ASYMMETRIC (ratio: " << biStats.asymmetryRatio << "x)" << std::endl;
+        log(LogLevel::Info, "  Status: ASYMMETRIC (ratio: %gx)\n", biStats.asymmetryRatio);
         if (biStats.aToB.maxDeviance > biStats.bToA.maxDeviance * 1.5) {
-            std::cout << "  -> Reference mesh has points far from test mesh" << std::endl;
-            std::cout << "     (Test mesh may have missing geometry/holes)" << std::endl;
+            log(LogLevel::Info, "  -> Reference mesh has points far from test mesh\n");
+            log(LogLevel::Info, "     (Test mesh may have missing geometry/holes)\n");
         } else if (biStats.bToA.maxDeviance > biStats.aToB.maxDeviance * 1.5) {
-            std::cout << "  -> Test mesh has points far from reference mesh" << std::endl;
-            std::cout << "     (Test mesh may have extra geometry)" << std::endl;
+            log(LogLevel::Info, "  -> Test mesh has points far from reference mesh\n");
+            log(LogLevel::Info, "     (Test mesh may have extra geometry)\n");
         }
     } else {
-        std::cout << "  Status: Symmetric (ratio: " << biStats.asymmetryRatio << "x)" << std::endl;
-        std::cout << "  -> Deviations are similar in both directions" << std::endl;
+        log(LogLevel::Info, "  Status: Symmetric (ratio: %gx)\n", biStats.asymmetryRatio);
+        log(LogLevel::Info, "  -> Deviations are similar in both directions\n");
     }
     
     // Detail on large deviations
-    std::cout << "\nLarge deviations (>0.0001) per direction:" << std::endl;
-    std::cout << "  A -> B: " << biStats.aToB.largeDevianceCount << " samples ("
-              << (100.0 * biStats.aToB.largeDevianceCount / biStats.aToB.totalSamples) << "%)" << std::endl;
-    std::cout << "  B -> A: " << biStats.bToA.largeDevianceCount << " samples ("
-              << (100.0 * biStats.bToA.largeDevianceCount / biStats.bToA.totalSamples) << "%)" << std::endl;
+    log(LogLevel::Info, "\nLarge deviations (>0.0001) per direction:\n");
+    log(LogLevel::Debug, "  A -> B: %d samples (%.2f%%)\n", biStats.aToB.largeDevianceCount,
+        100.0 * biStats.aToB.largeDevianceCount / biStats.aToB.totalSamples);
+    log(LogLevel::Debug, "  B -> A: %d samples (%.2f%%)\n", biStats.bToA.largeDevianceCount,
+        100.0 * biStats.bToA.largeDevianceCount / biStats.bToA.totalSamples);
     
     // Display normal variance if available
     if (biStats.aToB.maxNormalAngleDeg > 0.0 || biStats.bToA.maxNormalAngleDeg > 0.0) {
-        std::cout << "\n=== Vertex Normal Variance (Interpolated) ===" << std::endl;
+        log(LogLevel::Info, "\n=== Vertex Normal Variance (Interpolated) ===\n");
         
         if (biStats.aToB.maxNormalAngleDeg > 0.0) {
-            std::cout << "\nReference -> Test (A -> B):" << std::endl;
-            std::cout << "  Min angle:     " << biStats.aToB.minNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Max angle:     " << biStats.aToB.maxNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Average angle: " << biStats.aToB.averageNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Median angle:  " << biStats.aToB.medianNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Large deviations (>15 deg): " << biStats.aToB.largeNormalDevianceCount << " samples ("
-                      << (100.0 * biStats.aToB.largeNormalDevianceCount / biStats.aToB.totalSamples) << "%)" << std::endl;
+            log(LogLevel::Info, "\nReference -> Test (A -> B):\n");
+            log(LogLevel::Info, "  Min angle:     %g degrees\n", biStats.aToB.minNormalAngleDeg);
+            log(LogLevel::Info, "  Max angle:     %g degrees\n", biStats.aToB.maxNormalAngleDeg);
+            log(LogLevel::Info, "  Average angle: %g degrees\n", biStats.aToB.averageNormalAngleDeg);
+            log(LogLevel::Info, "  Median angle:  %g degrees\n", biStats.aToB.medianNormalAngleDeg);
+            log(LogLevel::Debug, "  Large deviations (>15 deg): %d samples (%.2f%%)\n",
+                biStats.aToB.largeNormalDevianceCount,
+                100.0 * biStats.aToB.largeNormalDevianceCount / biStats.aToB.totalSamples);
         }
         
         if (biStats.bToA.maxNormalAngleDeg > 0.0) {
-            std::cout << "\nTest -> Reference (B -> A):" << std::endl;
-            std::cout << "  Min angle:     " << biStats.bToA.minNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Max angle:     " << biStats.bToA.maxNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Average angle: " << biStats.bToA.averageNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Median angle:  " << biStats.bToA.medianNormalAngleDeg << " degrees" << std::endl;
-            std::cout << "  Large deviations (>15 deg): " << biStats.bToA.largeNormalDevianceCount << " samples ("
-                      << (100.0 * biStats.bToA.largeNormalDevianceCount / biStats.bToA.totalSamples) << "%)" << std::endl;
+            log(LogLevel::Info, "\nTest -> Reference (B -> A):\n");
+            log(LogLevel::Info, "  Min angle:     %g degrees\n", biStats.bToA.minNormalAngleDeg);
+            log(LogLevel::Info, "  Max angle:     %g degrees\n", biStats.bToA.maxNormalAngleDeg);
+            log(LogLevel::Info, "  Average angle: %g degrees\n", biStats.bToA.averageNormalAngleDeg);
+            log(LogLevel::Info, "  Median angle:  %g degrees\n", biStats.bToA.medianNormalAngleDeg);
+            log(LogLevel::Debug, "  Large deviations (>15 deg): %d samples (%.2f%%)\n",
+                biStats.bToA.largeNormalDevianceCount,
+                100.0 * biStats.bToA.largeNormalDevianceCount / biStats.bToA.totalSamples);
         }
     }
     
     // Display UV variance if available
     if (biStats.aToB.maxUVDistance > 0.0 || biStats.bToA.maxUVDistance > 0.0) {
-        std::cout << "\n=== UV Coordinate Variance (Interpolated) ===" << std::endl;
+        log(LogLevel::Info, "\n=== UV Coordinate Variance (Interpolated) ===\n");
         
         if (biStats.aToB.maxUVDistance > 0.0) {
-            std::cout << "\nReference -> Test (A -> B):" << std::endl;
-            std::cout << "  Min UV distance:     " << biStats.aToB.minUVDistance << std::endl;
-            std::cout << "  Max UV distance:     " << biStats.aToB.maxUVDistance << std::endl;
-            std::cout << "  Average UV distance: " << biStats.aToB.averageUVDistance << std::endl;
-            std::cout << "  Median UV distance:  " << biStats.aToB.medianUVDistance << std::endl;
-            std::cout << "  Large deviations (>0.1): " << biStats.aToB.largeUVDevianceCount << " samples ("
-                      << (100.0 * biStats.aToB.largeUVDevianceCount / biStats.aToB.totalSamples) << "%)" << std::endl;
+            log(LogLevel::Info, "\nReference -> Test (A -> B):\n");
+            log(LogLevel::Info, "  Min UV distance:     %g\n", biStats.aToB.minUVDistance);
+            log(LogLevel::Info, "  Max UV distance:     %g\n", biStats.aToB.maxUVDistance);
+            log(LogLevel::Info, "  Average UV distance: %g\n", biStats.aToB.averageUVDistance);
+            log(LogLevel::Info, "  Median UV distance:  %g\n", biStats.aToB.medianUVDistance);
+            log(LogLevel::Debug, "  Large deviations (>0.1): %d samples (%.2f%%)\n",
+                biStats.aToB.largeUVDevianceCount,
+                100.0 * biStats.aToB.largeUVDevianceCount / biStats.aToB.totalSamples);
         }
         
         if (biStats.bToA.maxUVDistance > 0.0) {
-            std::cout << "\nTest -> Reference (B -> A):" << std::endl;
-            std::cout << "  Min UV distance:     " << biStats.bToA.minUVDistance << std::endl;
-            std::cout << "  Max UV distance:     " << biStats.bToA.maxUVDistance << std::endl;
-            std::cout << "  Average UV distance: " << biStats.bToA.averageUVDistance << std::endl;
-            std::cout << "  Median UV distance:  " << biStats.bToA.medianUVDistance << std::endl;
-            std::cout << "  Large deviations (>0.1): " << biStats.bToA.largeUVDevianceCount << " samples ("
-                      << (100.0 * biStats.bToA.largeUVDevianceCount / biStats.bToA.totalSamples) << "%)" << std::endl;
+            log(LogLevel::Info, "\nTest -> Reference (B -> A):\n");
+            log(LogLevel::Info, "  Min UV distance:     %g\n", biStats.bToA.minUVDistance);
+            log(LogLevel::Info, "  Max UV distance:     %g\n", biStats.bToA.maxUVDistance);
+            log(LogLevel::Info, "  Average UV distance: %g\n", biStats.bToA.averageUVDistance);
+            log(LogLevel::Info, "  Median UV distance:  %g\n", biStats.bToA.medianUVDistance);
+            log(LogLevel::Debug, "  Large deviations (>0.1): %d samples (%.2f%%)\n",
+                biStats.bToA.largeUVDevianceCount,
+                100.0 * biStats.bToA.largeUVDevianceCount / biStats.bToA.totalSamples);
         }
     }
 }
@@ -780,7 +839,7 @@ void exportDebugVisualization(const std::string& filename,
                               double maxAngleDegrees,
                               unsigned int baseSeed) {
     
-    std::cout << "\n=== Generating Debug Visualization ===" << std::endl;
+    log(LogLevel::Info, "\n=== Generating Debug Visualization ===\n");
     
     // Build spatial database for meshB
     SpatialDb spatialDb(meshB);
@@ -817,9 +876,9 @@ void exportDebugVisualization(const std::string& filename,
     bool hasVertexNormals = (!meshA.vertexNormals.empty() && !meshB.vertexNormals.empty());
     bool hasUVs = (meshA.uvs.size() > 1 && meshB.uvs.size() > 1);
     
-    std::cout << "Analyzing " << numSamplesA << " samples..." << std::endl;
-    std::cout << "Has vertex normals: " << (hasVertexNormals ? "Yes" : "No") << std::endl;
-    std::cout << "Has UVs: " << (hasUVs ? "Yes" : "No") << std::endl;
+    log(LogLevel::Debug, "Analyzing %d samples...\n", numSamplesA);
+    log(LogLevel::Debug, "Has vertex normals: %s\n", hasVertexNormals ? "Yes" : "No");
+    log(LogLevel::Debug, "Has UVs: %s\n", hasUVs ? "Yes" : "No");
     
     for (const SurfaceSample& sample : samples) {
         SpatialDb::ClosestPointResult result = spatialDb.getClosestPointDetailedWithNormal(
@@ -908,27 +967,23 @@ void exportDebugVisualization(const std::string& filename,
     }
     
     // Print diagnostic information
-    std::cout << "\n=== Diagnostic Information ===" << std::endl;
+    log(LogLevel::Info, "\n=== Diagnostic Information ===\n");
     
-    std::cout << "\nMax Distance Case:" << std::endl;
-    std::cout << "  Distance: " << maxDistanceCase.distance << std::endl;
-    std::cout << "  Sample position: (" << maxDistanceCase.sample.position.x << ", " 
-              << maxDistanceCase.sample.position.y << ", " << maxDistanceCase.sample.position.z << ")" << std::endl;
-    std::cout << "  Closest position: (" << maxDistanceCase.closestResult.point.x << ", " 
-              << maxDistanceCase.closestResult.point.y << ", " << maxDistanceCase.closestResult.point.z << ")" << std::endl;
-    std::cout << "  Sample triangle: " << maxDistanceCase.sample.triangleIndex << std::endl;
-    std::cout << "  Closest triangle: " << maxDistanceCase.closestResult.triangleIndex << std::endl;
+    log(LogLevel::Info, "\nMax Distance Case:\n");
+    log(LogLevel::Debug, "  Distance: \n");
+    log(LogLevel::Debug, "  Sample position: (\n");
+    log(LogLevel::Debug, "  Closest position: (\n");
+    log(LogLevel::Debug, "  Sample triangle: \n");
+    log(LogLevel::Debug, "  Closest triangle: \n");
     
     if (hasVertexNormals) {
-        std::cout << "\nMax Normal Angle Case:" << std::endl;
-        std::cout << "  Normal angle: " << maxNormalAngleCase.normalAngle << " degrees" << std::endl;
-        std::cout << "  Distance: " << maxNormalAngleCase.distance << std::endl;
-        std::cout << "  Sample position: (" << maxNormalAngleCase.sample.position.x << ", " 
-                  << maxNormalAngleCase.sample.position.y << ", " << maxNormalAngleCase.sample.position.z << ")" << std::endl;
-        std::cout << "  Closest position: (" << maxNormalAngleCase.closestResult.point.x << ", " 
-                  << maxNormalAngleCase.closestResult.point.y << ", " << maxNormalAngleCase.closestResult.point.z << ")" << std::endl;
-        std::cout << "  Sample triangle: " << maxNormalAngleCase.sample.triangleIndex << std::endl;
-        std::cout << "  Closest triangle: " << maxNormalAngleCase.closestResult.triangleIndex << std::endl;
+        log(LogLevel::Info, "\nMax Normal Angle Case:\n");
+        log(LogLevel::Debug, "  Normal angle: \n");
+        log(LogLevel::Debug, "  Distance: \n");
+        log(LogLevel::Debug, "  Sample position: (\n");
+        log(LogLevel::Debug, "  Closest position: (\n");
+        log(LogLevel::Debug, "  Sample triangle: \n");
+        log(LogLevel::Debug, "  Closest triangle: \n");
         
         // Get normals at sample point
         const Triangle& sampleTri = meshA.tris[maxNormalAngleCase.sample.triangleIndex];
@@ -945,20 +1000,18 @@ void exportDebugVisualization(const std::string& filename,
             meshB.vertexNormals[closestTri.i2] * maxNormalAngleCase.closestResult.baryW;
         closestNormal = closestNormal.normalized();
         
-        std::cout << "  Sample normal: (" << sampleNormal.x << ", " << sampleNormal.y << ", " << sampleNormal.z << ")" << std::endl;
-        std::cout << "  Closest normal: (" << closestNormal.x << ", " << closestNormal.y << ", " << closestNormal.z << ")" << std::endl;
+        log(LogLevel::Debug, "  Sample normal: (\n");
+        log(LogLevel::Debug, "  Closest normal: (\n");
     }
     
     if (hasUVs && maxUVDistanceCase.uvDistance > 0.0) {
-        std::cout << "\nMax UV Distance Case:" << std::endl;
-        std::cout << "  UV distance: " << maxUVDistanceCase.uvDistance << std::endl;
-        std::cout << "  Position distance: " << maxUVDistanceCase.distance << std::endl;
-        std::cout << "  Sample position: (" << maxUVDistanceCase.sample.position.x << ", " 
-                  << maxUVDistanceCase.sample.position.y << ", " << maxUVDistanceCase.sample.position.z << ")" << std::endl;
-        std::cout << "  Closest position: (" << maxUVDistanceCase.closestResult.point.x << ", " 
-                  << maxUVDistanceCase.closestResult.point.y << ", " << maxUVDistanceCase.closestResult.point.z << ")" << std::endl;
-        std::cout << "  Sample triangle: " << maxUVDistanceCase.sample.triangleIndex << std::endl;
-        std::cout << "  Closest triangle: " << maxUVDistanceCase.closestResult.triangleIndex << std::endl;
+        log(LogLevel::Info, "\nMax UV Distance Case:\n");
+        log(LogLevel::Debug, "  UV distance: \n");
+        log(LogLevel::Debug, "  Position distance: \n");
+        log(LogLevel::Debug, "  Sample position: (\n");
+        log(LogLevel::Debug, "  Closest position: (\n");
+        log(LogLevel::Debug, "  Sample triangle: \n");
+        log(LogLevel::Debug, "  Closest triangle: \n");
         
         // Get UVs
         const Triangle& sampleTri = meshA.tris[maxUVDistanceCase.sample.triangleIndex];
@@ -985,29 +1038,27 @@ void exportDebugVisualization(const std::string& filename,
                          uv1_closest.v * maxUVDistanceCase.closestResult.baryV + 
                          uv2_closest.v * maxUVDistanceCase.closestResult.baryW;
         
-        std::cout << "  Sample UV: (" << sampleU << ", " << sampleV << ")" << std::endl;
-        std::cout << "  Closest UV: (" << closestU << ", " << closestV << ")" << std::endl;
-        std::cout << "  Sample triangle UVs:" << std::endl;
-        std::cout << "    v0: (" << uv0_sample.u << ", " << uv0_sample.v << ")" << std::endl;
-        std::cout << "    v1: (" << uv1_sample.u << ", " << uv1_sample.v << ")" << std::endl;
-        std::cout << "    v2: (" << uv2_sample.u << ", " << uv2_sample.v << ")" << std::endl;
-        std::cout << "  Closest triangle UVs:" << std::endl;
-        std::cout << "    v0: (" << uv0_closest.u << ", " << uv0_closest.v << ")" << std::endl;
-        std::cout << "    v1: (" << uv1_closest.u << ", " << uv1_closest.v << ")" << std::endl;
-        std::cout << "    v2: (" << uv2_closest.u << ", " << uv2_closest.v << ")" << std::endl;
-        std::cout << "  Barycentric coords (sample): (" << maxUVDistanceCase.sample.baryU << ", " 
-                  << maxUVDistanceCase.sample.baryV << ", " << maxUVDistanceCase.sample.baryW << ")" << std::endl;
-        std::cout << "  Barycentric coords (closest): (" << maxUVDistanceCase.closestResult.baryU << ", " 
-                  << maxUVDistanceCase.closestResult.baryV << ", " << maxUVDistanceCase.closestResult.baryW << ")" << std::endl;
+        log(LogLevel::Debug, "  Sample UV: (\n");
+        log(LogLevel::Debug, "  Closest UV: (\n");
+        log(LogLevel::Debug, "  Sample triangle UVs:\n");
+        log(LogLevel::Debug, "    v0: (\n");
+        log(LogLevel::Debug, "    v1: (\n");
+        log(LogLevel::Debug, "    v2: (\n");
+        log(LogLevel::Debug, "  Closest triangle UVs:\n");
+        log(LogLevel::Debug, "    v0: (\n");
+        log(LogLevel::Debug, "    v1: (\n");
+        log(LogLevel::Debug, "    v2: (\n");
+        log(LogLevel::Debug, "  Barycentric coords (sample): (\n");
+        log(LogLevel::Debug, "  Barycentric coords (closest): (\n");
     } else if (hasUVs) {
-        std::cout << "\nMax UV Distance Case: NOT FOUND" << std::endl;
-        std::cout << "  (No valid UV comparisons - one or both meshes lack UVs on compared triangles)" << std::endl;
+        log(LogLevel::Info, "\nMax UV Distance Case: NOT FOUND\n");
+        log(LogLevel::Warning, "  (No valid UV comparisons - one or both meshes lack UVs on compared triangles)\n");
     }
     
     // Export to OBJ file
     std::ofstream out(filename);
     if (!out.is_open()) {
-        std::cerr << "Failed to open output file: " << filename << std::endl;
+        log(LogLevel::Error, "Failed to open output file: %s\n", filename.c_str());
         return;
     }
     
@@ -1097,31 +1148,31 @@ void exportDebugVisualization(const std::string& filename,
     
     out.close();
     
-    std::cout << "\nDebug visualization exported to: " << filename << std::endl;
-    std::cout << "\nObjects in file:" << std::endl;
-    std::cout << "  Groups (can be toggled in 3D viewer):" << std::endl;
-    std::cout << "    - reference_mesh (mesh_a)" << std::endl;
-    std::cout << "    - test_mesh (mesh_b)" << std::endl;
-    std::cout << "    - max_distance_sample (LARGE sphere = sample point on A)" << std::endl;
-    std::cout << "    - max_distance_surface (small sphere = closest point on B)" << std::endl;
+    log(LogLevel::Info, "\nDebug visualization exported to: \n");
+    log(LogLevel::Info, "\nObjects in file:\n");
+    log(LogLevel::Info, "  Groups (can be toggled in 3D viewer):\n");
+    log(LogLevel::Info, "    - reference_mesh (mesh_a)\n");
+    log(LogLevel::Info, "    - test_mesh (mesh_b)\n");
+    log(LogLevel::Info, "    - max_distance_sample (LARGE sphere = sample point on A)\n");
+    log(LogLevel::Info, "    - max_distance_surface (small sphere = closest point on B)\n");
     if (hasVertexNormals) {
-        std::cout << "    - max_normal_sample (LARGE sphere = sample point on A)" << std::endl;
-        std::cout << "    - max_normal_surface (small sphere = closest point on B)" << std::endl;
+        log(LogLevel::Info, "    - max_normal_sample (LARGE sphere = sample point on A)\n");
+        log(LogLevel::Info, "    - max_normal_surface (small sphere = closest point on B)\n");
     }
     if (hasUVs && maxUVDistanceCase.uvDistance > 0.0) {
-        std::cout << "    - max_uv_sample (LARGE sphere = sample point on A)" << std::endl;
-        std::cout << "    - max_uv_surface (small sphere = closest point on B)" << std::endl;
+        log(LogLevel::Info, "    - max_uv_sample (LARGE sphere = sample point on A)\n");
+        log(LogLevel::Info, "    - max_uv_surface (small sphere = closest point on B)\n");
     } else if (hasUVs) {
-        std::cout << "    - [UV spheres NOT created - no valid UV comparisons found]" << std::endl;
+        log(LogLevel::Info, "    - [UV spheres NOT created - no valid UV comparisons found]\n");
     }
-    std::cout << "\n  Sphere sizes:" << std::endl;
-    std::cout << "    - Sample sphere (LARGE = 3x base): " << (baseSphereRadius * 3.0) << " units" << std::endl;
-    std::cout << "    - Surface sphere (small = 1x base): " << baseSphereRadius << " units" << std::endl;
-    std::cout << "    - Base radius (0.5% of bbox diagonal): " << baseSphereRadius << " units" << std::endl;
-    std::cout << "\n  IMPORTANT:" << std::endl;
-    std::cout << "    - This shows Direction 1 (A->B): samples from '" << meshA.name << "'" << std::endl;
-    std::cout << "    - To detect features in mesh B (spikes/protrusions), swap inputs:" << std::endl;
-    std::cout << "      mesh_compare <mesh_with_spike> <reference> ... --debug out.obj" << std::endl;
+    log(LogLevel::Info, "\n  Sphere sizes:\n");
+    log(LogLevel::Info, "    - Sample sphere (LARGE = 3x base): \n");
+    log(LogLevel::Info, "    - Surface sphere (small = 1x base): \n");
+    log(LogLevel::Info, "    - Base radius (0.5% of bbox diagonal): \n");
+    log(LogLevel::Info, "\n  IMPORTANT:\n");
+    log(LogLevel::Info, "    - This shows Direction 1 (A->B): samples from '\n");
+    log(LogLevel::Info, "    - To detect features in mesh B (spikes/protrusions), swap inputs:\n");
+    log(LogLevel::Info, "      mesh_compare <mesh_with_spike> <reference> ... --debug out.obj\n");
 }
 
 } // namespace MeshGeometricDeviation
