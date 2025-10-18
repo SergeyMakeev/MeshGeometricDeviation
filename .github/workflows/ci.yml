@@ -56,15 +56,4 @@ jobs:
       run: |
         cmake --build build --config Release
   
-    - name: Upload artifacts
-      if: matrix.compiler == 'gcc' || matrix.compiler == 'msvc' || (matrix.os == 'macos-latest')
-      uses: actions/upload-artifact@v4
-      with:
-        name: mesh_compare-${{ matrix.os }}
-        path: |
-          build/mesh_compare*
-          build/Release/mesh_compare.exe
-          build/libMeshGeometricDeviation.*
-          build/Release/MeshGeometricDeviation.lib
-        retention-days: 7
 
