@@ -5,6 +5,7 @@
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 #define FAST_OBJ_IMPLEMENTATION
 #include "fast_obj.h"
@@ -290,7 +291,10 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     
     // Build spatial database for meshB
     std::cout << "\nBuilding spatial database for test mesh..." << std::endl;
+    auto t_start_db = std::chrono::high_resolution_clock::now();
     SpatialDb spatialDb(meshB);
+    auto t_end_db = std::chrono::high_resolution_clock::now();
+    double time_db = std::chrono::duration<double>(t_end_db - t_start_db).count();
     
     auto stats = spatialDb.getStats();
     std::cout << "Spatial database stats:" << std::endl;
@@ -298,10 +302,15 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     std::cout << "  Leaf nodes: " << stats.leafNodes << std::endl;
     std::cout << "  Max depth: " << stats.maxDepth << std::endl;
     std::cout << "  Avg triangles per leaf: " << stats.avgTrisPerLeaf << std::endl;
+    std::cout << "  Build time: " << time_db << " seconds" << std::endl;
     
     // Generate samples on meshA
     std::cout << "\nGenerating surface samples on reference mesh..." << std::endl;
+    auto t_start_sample = std::chrono::high_resolution_clock::now();
     std::vector<SurfaceSample> samples = generateAreaWeightedSamples(meshA, numSamples, seed);
+    auto t_end_sample = std::chrono::high_resolution_clock::now();
+    double time_sample = std::chrono::duration<double>(t_end_sample - t_start_sample).count();
+    std::cout << "  Sampling time: " << time_sample << " seconds" << std::endl;
     
     // Check if both meshes have vertex normals for normal variance computation
     bool hasVertexNormals = (!meshA.vertexNormals.empty() && !meshB.vertexNormals.empty());
@@ -310,10 +319,13 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     bool hasUVs = (meshA.uvs.size() > 1 && meshB.uvs.size() > 1);
     
     // Measure distances
-    std::cout << "Measuring distances";
+    std::cout << "\nMeasuring distances";
     if (hasVertexNormals) std::cout << " + normal variance";
     if (hasUVs) std::cout << " + UV variance";
     std::cout << "..." << std::endl;
+    
+    auto t_start_measure = std::chrono::high_resolution_clock::now();
+    
     std::vector<double> distances;
     std::vector<double> normalAngles;  // Angles between interpolated vertex normals (degrees)
     std::vector<double> uvDistances;   // Distances between interpolated UV coordinates
@@ -334,17 +346,7 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     const double largeNormalAngleThreshold = 15.0; // 15 degrees
     const double largeUVThreshold = 0.1; // 0.1 UV units
     
-    // Progress reporting for large datasets
-    const bool showProgress = (numSamples > 100000);
-    const int progressInterval = numSamples / 10;  // Report every 10%
-    int processedSamples = 0;
-    
     for (const SurfaceSample& sample : samples) {
-        // Progress indicator for large meshes
-        if (showProgress && (processedSamples % progressInterval == 0)) {
-            std::cout << "  Progress: " << (processedSamples * 100 / numSamples) << "%" << std::endl;
-        }
-        processedSamples++;
         double distance;
         SpatialDb::ClosestPointResult result;
         
@@ -435,11 +437,15 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         }
     }
     
-    if (showProgress) {
-        std::cout << "  Progress: 100%" << std::endl;
-    }
+    auto t_end_measure = std::chrono::high_resolution_clock::now();
+    double time_measure = std::chrono::duration<double>(t_end_measure - t_start_measure).count();
+    
+    std::cout << "  Measurement time: " << time_measure << " seconds" << std::endl;
+    std::cout << "  Samples/second: " << (numSamples / time_measure) << std::endl;
     
     // Compute statistics
+    auto t_start_stats = std::chrono::high_resolution_clock::now();
+    
     DevianceStats devianceStats;
     devianceStats.totalSamples = numSamples;
     devianceStats.normalMatchedCount = normalMatchedCount;
@@ -525,6 +531,19 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         devianceStats.averageUVDistance = 0.0;
         devianceStats.medianUVDistance = 0.0;
     }
+    
+    auto t_end_stats = std::chrono::high_resolution_clock::now();
+    double time_stats = std::chrono::duration<double>(t_end_stats - t_start_stats).count();
+    
+    std::cout << "  Statistics time: " << time_stats << " seconds" << std::endl;
+    
+    // Total time
+    double time_total = time_db + time_sample + time_measure + time_stats;
+    std::cout << "\nTotal comparison time: " << time_total << " seconds" << std::endl;
+    std::cout << "  KD-tree build: " << (time_db / time_total * 100) << "%" << std::endl;
+    std::cout << "  Sampling:      " << (time_sample / time_total * 100) << "%" << std::endl;
+    std::cout << "  Measurement:   " << (time_measure / time_total * 100) << "%" << std::endl;
+    std::cout << "  Statistics:    " << (time_stats / time_total * 100) << "%" << std::endl;
     
     return devianceStats;
 }
