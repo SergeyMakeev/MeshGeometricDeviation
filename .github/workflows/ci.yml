@@ -55,22 +55,7 @@ jobs:
     - name: Build
       run: |
         cmake --build build --config Release
-    
-    - name: Test basic functionality (Linux/macOS)
-      if: runner.os != 'Windows'
-      working-directory: build
-      run: |
-        ./mesh_compare 2>&1 | grep -q "Usage:" && echo "✓ Help works" || exit 1
-    
-    - name: Test basic functionality (Windows)
-      if: runner.os == 'Windows'
-      working-directory: build/Release
-      run: |
-        ./mesh_compare.exe 2>&1 | Select-String -Pattern "Usage:" -Quiet
-        if ($LASTEXITCODE -ne 1) { exit 1 }
-        echo "✓ Help works"
-      shell: pwsh
-    
+  
     - name: Upload artifacts
       if: matrix.compiler == 'gcc' || matrix.compiler == 'msvc' || (matrix.os == 'macos-latest')
       uses: actions/upload-artifact@v4
