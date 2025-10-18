@@ -1,6 +1,6 @@
 # MeshGeometricDeviation
 
-[![CI](https://github.com/YOUR_USERNAME/MeshGeometricDeviation/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/MeshGeometricDeviation/actions/workflows/ci.yml)
+[![CI](https://github.com/SergeyMakeev/MeshGeometricDeviation/actions/workflows/ci.yml/badge.svg)](https://github.com/SergeyMakeev/MeshGeometricDeviation/actions/workflows/ci.yml)
 
 A high-performance C++ library for computing geometric deviations between 3D triangle meshes. Provides bidirectional comparison with comprehensive statistics including min/max deviation, RMSD, and asymmetry analysis.
 
@@ -31,7 +31,7 @@ A high-performance C++ library for computing geometric deviations between 3D tri
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/MeshGeometricDeviation.git
+git clone https://github.com/SergeyMakeev/MeshGeometricDeviation.git
 cd MeshGeometricDeviation
 
 # Configure and build
@@ -377,7 +377,7 @@ If you use this library in your research, please cite:
   title = {MeshGeometricDeviation: A C++ Library for Mesh Comparison},
   author = {Your Name},
   year = {2025},
-  url = {https://github.com/YOUR_USERNAME/MeshGeometricDeviation}
+  url = {https://github.com/SergeyMakeev/MeshGeometricDeviation}
 }
 ```
 
