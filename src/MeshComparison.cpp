@@ -1,5 +1,4 @@
-#include "MeshComparison.h"
-#include "SpatialDb.h"
+#include "MeshGeometricDeviation/MeshComparison.h"
 #include <iostream>
 #include <vector>
 #include <random>
@@ -8,6 +7,8 @@
 
 #define FAST_OBJ_IMPLEMENTATION
 #include "fast_obj.h"
+
+namespace MeshGeometricDeviation {
 
 // Helper to convert Vertex to Vector3
 inline Vector3 vertexToVector3(const Vertex& v) {
@@ -440,4 +441,6 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats) {
     std::cout << "  B -> A: " << biStats.bToA.largeDevianceCount << " samples ("
               << (100.0 * biStats.bToA.largeDevianceCount / biStats.bToA.totalSamples) << "%)" << std::endl;
 }
+
+} // namespace MeshGeometricDeviation
 

@@ -1,5 +1,7 @@
-#include "MeshComparison.h"
+#include "MeshGeometricDeviation/MeshComparison.h"
 #include <iostream>
+
+using namespace MeshGeometricDeviation;
 
 int main(int argc, char* argv[]) {
     std::cout << "=== Mesh Deviance Comparison Tool ===" << std::endl;

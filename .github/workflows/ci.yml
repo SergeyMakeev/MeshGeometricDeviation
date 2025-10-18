@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} - ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        compiler: [default]
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+            c_compiler: gcc
+            cxx_compiler: g++
+          - os: ubuntu-latest
+            compiler: clang
+            c_compiler: clang
+            cxx_compiler: clang++
+          - os: windows-latest
+            compiler: msvc
+          - os: macos-latest
+            compiler: clang
+            c_compiler: clang
+            cxx_compiler: clang++
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up CMake
+      uses: jwlawson/actions-setup-cmake@v2
+      with:
+        cmake-version: '3.14.x'
+    
+    - name: Set up compilers (Linux)
+      if: runner.os == 'Linux' && matrix.c_compiler
+      run: |
+        echo "CC=${{ matrix.c_compiler }}" >> $GITHUB_ENV
+        echo "CXX=${{ matrix.cxx_compiler }}" >> $GITHUB_ENV
+    
+    - name: Configure CMake
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=ON
+    
+    - name: Build
+      run: |
+        cmake --build build --config Release
+    
+    - name: Test basic functionality (Linux/macOS)
+      if: runner.os != 'Windows'
+      working-directory: build
+      run: |
+        ./mesh_compare 2>&1 | grep -q "Usage:" && echo "✓ Help works" || exit 1
+    
+    - name: Test basic functionality (Windows)
+      if: runner.os == 'Windows'
+      working-directory: build/Release
+      run: |
+        ./mesh_compare.exe 2>&1 | Select-String -Pattern "Usage:" -Quiet
+        if ($LASTEXITCODE -ne 1) { exit 1 }
+        echo "✓ Help works"
+      shell: pwsh
+    
+    - name: Upload artifacts
+      if: matrix.compiler == 'gcc' || matrix.compiler == 'msvc' || (matrix.os == 'macos-latest')
+      uses: actions/upload-artifact@v4
+      with:
+        name: mesh_compare-${{ matrix.os }}
+        path: |
+          build/mesh_compare*
+          build/Release/mesh_compare.exe
+          build/libMeshGeometricDeviation.*
+          build/Release/MeshGeometricDeviation.lib
+        retention-days: 7
+
