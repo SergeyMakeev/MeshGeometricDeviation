@@ -23,6 +23,7 @@ struct Mesh
 {
     std::vector<Vertex> verts;
     std::vector<Triangle> tris;
+    std::vector<Vector3> vertexNormals;  // Per-vertex normals (computed from adjacent faces)
     std::string name;
 };
 
@@ -37,6 +38,13 @@ struct DevianceStats {
     int normalMatchedCount;
     int fallbackCount;
     int largeDevianceCount;
+    
+    // Normal variance metrics
+    double minNormalAngleDeg;        // Minimum angle between normals (degrees)
+    double maxNormalAngleDeg;        // Maximum angle between normals (degrees)
+    double averageNormalAngleDeg;    // Average angle between normals (degrees)
+    double medianNormalAngleDeg;     // Median angle between normals (degrees)
+    int largeNormalDevianceCount;    // Count of samples with angle > 15 degrees
 };
 
 // Bidirectional comparison results
@@ -59,6 +67,7 @@ bool loadObjFile(const std::string& filename, Mesh& mesh);
 // Mesh analysis
 double computeMeshSurfaceArea(const Mesh& mesh);
 int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea);
+void computeVertexNormals(Mesh& mesh);  // Compute per-vertex normals from adjacent faces
 
 // Mesh comparison
 DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples, 

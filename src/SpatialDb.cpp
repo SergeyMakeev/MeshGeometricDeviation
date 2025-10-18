@@ -84,9 +84,12 @@ SpatialDb::~SpatialDb() {
     delete root;
 }
 
-SpatialDb::ClosestPointResult::ClosestPointResult() : point(0, 0, 0), matchedNormalConstraint(false) {}
+SpatialDb::ClosestPointResult::ClosestPointResult() 
+    : point(0, 0, 0), matchedNormalConstraint(false), triangleIndex(0), baryU(0), baryV(0), baryW(0) {}
 
-SpatialDb::ClosestPointResult::ClosestPointResult(const Vector3& p, bool matched) : point(p), matchedNormalConstraint(matched) {}
+SpatialDb::ClosestPointResult::ClosestPointResult(const Vector3& p, bool matched, unsigned int triIdx, 
+                                                   double u, double v, double w) 
+    : point(p), matchedNormalConstraint(matched), triangleIndex(triIdx), baryU(u), baryV(v), baryW(w) {}
 
 void SpatialDb::build(const Mesh& mesh) {
     meshPtr = &mesh;
@@ -222,6 +225,79 @@ Vector3 SpatialDb::closestPointOnTriangle(const Vector3& p, const TriangleData& 
     return closest;
 }
 
+Vector3 SpatialDb::closestPointOnTriangleWithBary(const Vector3& p, const TriangleData& tri, double& distSq,
+                                                   double& baryU, double& baryV, double& baryW) const {
+    const Vector3& a = tri.v0;
+    const Vector3& b = tri.v1;
+    const Vector3& c = tri.v2;
+
+    Vector3 ab = b - a;
+    Vector3 ac = c - a;
+    Vector3 ap = p - a;
+
+    double d1 = ab.dot(ap);
+    double d2 = ac.dot(ap);
+    if (d1 <= 0.0 && d2 <= 0.0) {
+        distSq = ap.lengthSquared();
+        baryU = 1.0; baryV = 0.0; baryW = 0.0;
+        return a;
+    }
+
+    Vector3 bp = p - b;
+    double d3 = ab.dot(bp);
+    double d4 = ac.dot(bp);
+    if (d3 >= 0.0 && d4 <= d3) {
+        distSq = bp.lengthSquared();
+        baryU = 0.0; baryV = 1.0; baryW = 0.0;
+        return b;
+    }
+
+    double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
+        double v = d1 / (d1 - d3);
+        Vector3 closest = a + ab * v;
+        distSq = (p - closest).lengthSquared();
+        baryU = 1.0 - v; baryV = v; baryW = 0.0;
+        return closest;
+    }
+
+    Vector3 cp = p - c;
+    double d5 = ab.dot(cp);
+    double d6 = ac.dot(cp);
+    if (d6 >= 0.0 && d5 <= d6) {
+        distSq = cp.lengthSquared();
+        baryU = 0.0; baryV = 0.0; baryW = 1.0;
+        return c;
+    }
+
+    double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
+        double w = d2 / (d2 - d6);
+        Vector3 closest = a + ac * w;
+        distSq = (p - closest).lengthSquared();
+        baryU = 1.0 - w; baryV = 0.0; baryW = w;
+        return closest;
+    }
+
+    double va = d3 * d6 - d5 * d4;
+    if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
+        double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        Vector3 closest = b + (c - b) * w;
+        distSq = (p - closest).lengthSquared();
+        baryU = 0.0; baryV = 1.0 - w; baryW = w;
+        return closest;
+    }
+
+    double denom = 1.0 / (va + vb + vc);
+    double v = vb * denom;
+    double w = vc * denom;
+    double u = 1.0 - v - w;
+    Vector3 closest = a + ab * v + ac * w;
+    distSq = (p - closest).lengthSquared();
+    baryU = u; baryV = v; baryW = w;
+    return closest;
+}
+
 void SpatialDb::searchNode(const KdNode* node, const Vector3& query, Vector3& closestPoint, double& minDistSq) const {
     if (!node) return;
 
@@ -248,6 +324,40 @@ void SpatialDb::searchNode(const KdNode* node, const Vector3& query, Vector3& cl
 
         searchNode(nearChild, query, closestPoint, minDistSq);
         searchNode(farChild, query, closestPoint, minDistSq);
+    }
+}
+
+void SpatialDb::searchNodeDetailed(const KdNode* node, const Vector3& query, ClosestPointResult& result, double& minDistSq) const {
+    if (!node) return;
+
+    double boxDistSq = node->bounds.distanceSquared(query);
+    if (boxDistSq >= minDistSq) {
+        return;
+    }
+
+    if (node->isLeaf()) {
+        for (const auto& tri : node->triangles) {
+            double distSq;
+            double baryU, baryV, baryW;
+            Vector3 candidate = closestPointOnTriangleWithBary(query, tri, distSq, baryU, baryV, baryW);
+            if (distSq < minDistSq) {
+                minDistSq = distSq;
+                result.point = candidate;
+                result.triangleIndex = tri.index;
+                result.baryU = baryU;
+                result.baryV = baryV;
+                result.baryW = baryW;
+            }
+        }
+    } else {
+        double queryPos = (node->splitAxis == 0) ? query.x : 
+                       ((node->splitAxis == 1) ? query.y : query.z);
+        
+        KdNode* nearChild = (queryPos < node->splitPos) ? node->left : node->right;
+        KdNode* farChild = (queryPos < node->splitPos) ? node->right : node->left;
+
+        searchNodeDetailed(nearChild, query, result, minDistSq);
+        searchNodeDetailed(farChild, query, result, minDistSq);
     }
 }
 
@@ -281,6 +391,44 @@ void SpatialDb::searchNodeWithNormal(const KdNode* node, const Vector3& query, c
 
         searchNodeWithNormal(nearChild, query, desiredNormal, minDotProduct, closestPoint, minDistSq);
         searchNodeWithNormal(farChild, query, desiredNormal, minDotProduct, closestPoint, minDistSq);
+    }
+}
+
+void SpatialDb::searchNodeWithNormalDetailed(const KdNode* node, const Vector3& query, const Vector3& desiredNormal,
+                                 double minDotProduct, ClosestPointResult& result, double& minDistSq) const {
+    if (!node) return;
+
+    double boxDistSq = node->bounds.distanceSquared(query);
+    if (boxDistSq >= minDistSq) {
+        return;
+    }
+
+    if (node->isLeaf()) {
+        for (const auto& tri : node->triangles) {
+            double dotProduct = tri.normal.dot(desiredNormal);
+            if (dotProduct >= minDotProduct) {
+                double distSq;
+                double baryU, baryV, baryW;
+                Vector3 candidate = closestPointOnTriangleWithBary(query, tri, distSq, baryU, baryV, baryW);
+                if (distSq < minDistSq) {
+                    minDistSq = distSq;
+                    result.point = candidate;
+                    result.triangleIndex = tri.index;
+                    result.baryU = baryU;
+                    result.baryV = baryV;
+                    result.baryW = baryW;
+                }
+            }
+        }
+    } else {
+        double queryPos = (node->splitAxis == 0) ? query.x : 
+                       ((node->splitAxis == 1) ? query.y : query.z);
+        
+        KdNode* nearChild = (queryPos < node->splitPos) ? node->left : node->right;
+        KdNode* farChild = (queryPos < node->splitPos) ? node->right : node->left;
+
+        searchNodeWithNormalDetailed(nearChild, query, desiredNormal, minDotProduct, result, minDistSq);
+        searchNodeWithNormalDetailed(farChild, query, desiredNormal, minDotProduct, result, minDistSq);
     }
 }
 
@@ -324,6 +472,47 @@ SpatialDb::ClosestPointResult SpatialDb::getClosestPointOnMeshSurface(const Vect
 double SpatialDb::getDistanceToSurface(const Vector3& queryPoint) const {
     Vector3 closest = getClosestPointOnMeshSurface(queryPoint);
     return (queryPoint - closest).length();
+}
+
+SpatialDb::ClosestPointResult SpatialDb::getClosestPointDetailed(const Vector3& queryPoint) const {
+    if (!root) {
+        return ClosestPointResult(Vector3(0, 0, 0), false);
+    }
+
+    ClosestPointResult result;
+    result.matchedNormalConstraint = false;  // Not using normal filtering
+    double minDistSq = std::numeric_limits<double>::max();
+    
+    searchNodeDetailed(root, queryPoint, result, minDistSq);
+    
+    return result;
+}
+
+SpatialDb::ClosestPointResult SpatialDb::getClosestPointDetailedWithNormal(const Vector3& queryPoint, const Vector3& desiredNormal,
+                                                     double maxAngleDegrees) const {
+    if (!root) {
+        return ClosestPointResult(Vector3(0, 0, 0), false);
+    }
+
+    Vector3 normalizedDesiredNormal = desiredNormal.normalized();
+    
+    double maxAngleRadians = maxAngleDegrees * 3.14159265358979323846 / 180.0;
+    double minDotProduct = std::cos(maxAngleRadians);
+
+    ClosestPointResult result;
+    double minDistSq = std::numeric_limits<double>::max();
+    
+    searchNodeWithNormalDetailed(root, queryPoint, normalizedDesiredNormal, minDotProduct, result, minDistSq);
+    
+    if (minDistSq == std::numeric_limits<double>::max()) {
+        // Fallback to search without normal filtering
+        searchNodeDetailed(root, queryPoint, result, minDistSq);
+        result.matchedNormalConstraint = false;
+    } else {
+        result.matchedNormalConstraint = true;
+    }
+    
+    return result;
 }
 
 SpatialDb::Stats SpatialDb::getStats() const {

@@ -20,6 +20,7 @@ struct SurfaceSample {
     Vector3 position;
     Vector3 normal;
     unsigned int triangleIndex;
+    double baryU, baryV, baryW;  // Barycentric coordinates
 };
 
 // Sample a random point on a triangle using barycentric coordinates
@@ -52,6 +53,9 @@ static SurfaceSample samplePointOnTriangle(const Mesh& mesh, unsigned int triIdx
     sample.position = position;
     sample.normal = normal;
     sample.triangleIndex = triIdx;
+    sample.baryU = u;
+    sample.baryV = v;
+    sample.baryW = w;
     
     return sample;
 }
@@ -205,6 +209,34 @@ double computeMeshSurfaceArea(const Mesh& mesh) {
     return totalArea;
 }
 
+// Compute per-vertex normals from adjacent faces (area-weighted average)
+void computeVertexNormals(Mesh& mesh) {
+    // Initialize vertex normals to zero
+    mesh.vertexNormals.clear();
+    mesh.vertexNormals.resize(mesh.verts.size(), Vector3(0, 0, 0));
+    
+    // Accumulate face normals weighted by face area
+    for (const Triangle& tri : mesh.tris) {
+        const Vector3 v0 = vertexToVector3(mesh.verts[tri.i0]);
+        const Vector3 v1 = vertexToVector3(mesh.verts[tri.i1]);
+        const Vector3 v2 = vertexToVector3(mesh.verts[tri.i2]);
+        
+        Vector3 edge1 = v1 - v0;
+        Vector3 edge2 = v2 - v0;
+        Vector3 faceNormal = edge1.cross(edge2);  // Unnormalized (weighted by area)
+        
+        // Add to each vertex of the triangle
+        mesh.vertexNormals[tri.i0] = mesh.vertexNormals[tri.i0] + faceNormal;
+        mesh.vertexNormals[tri.i1] = mesh.vertexNormals[tri.i1] + faceNormal;
+        mesh.vertexNormals[tri.i2] = mesh.vertexNormals[tri.i2] + faceNormal;
+    }
+    
+    // Normalize all vertex normals
+    for (Vector3& normal : mesh.vertexNormals) {
+        normal = normal.normalized();
+    }
+}
+
 // Compute number of samples based on surface area and sample density
 // Ensures at least one sample per triangle
 int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea) {
@@ -250,21 +282,34 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     std::cout << "\nGenerating surface samples on reference mesh..." << std::endl;
     std::vector<SurfaceSample> samples = generateAreaWeightedSamples(meshA, numSamples, seed);
     
+    // Check if both meshes have vertex normals for normal variance computation
+    bool hasVertexNormals = (!meshA.vertexNormals.empty() && !meshB.vertexNormals.empty());
+    if (hasVertexNormals) {
+        std::cout << "Computing vertex normal variance..." << std::endl;
+    }
+    
     // Measure distances
     std::cout << "Measuring distances..." << std::endl;
     std::vector<double> distances;
+    std::vector<double> normalAngles;  // Angles between interpolated vertex normals (degrees)
     distances.reserve(numSamples);
+    if (hasVertexNormals) {
+        normalAngles.reserve(numSamples);
+    }
     
     int normalMatchedCount = 0;
     int fallbackCount = 0;
     int largeDevianceCount = 0;
+    int largeNormalDevianceCount = 0;
     const double largeDevianceThreshold = 1e-4; // 0.0001 units
+    const double largeNormalAngleThreshold = 15.0; // 15 degrees
     
     for (const SurfaceSample& sample : samples) {
         double distance;
+        SpatialDb::ClosestPointResult result;
         
         if (useNormalFiltering) {
-            SpatialDb::ClosestPointResult result = spatialDb.getClosestPointOnMeshSurface(
+            result = spatialDb.getClosestPointDetailedWithNormal(
                 sample.position, sample.normal, maxAngleDegrees);
             
             distance = (result.point - sample.position).length();
@@ -276,8 +321,8 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
             }
         } else {
             // Use simple closest point query without normal filtering
-            Vector3 closestPoint = spatialDb.getClosestPointOnMeshSurface(sample.position);
-            distance = (closestPoint - sample.position).length();
+            result = spatialDb.getClosestPointDetailed(sample.position);
+            distance = (result.point - sample.position).length();
             normalMatchedCount++; // Not applicable, but count for consistency
         }
         
@@ -285,6 +330,37 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         
         if (distance > largeDevianceThreshold) {
             largeDevianceCount++;
+        }
+        
+        // Compute normal variance if both meshes have vertex normals
+        if (hasVertexNormals) {
+            // Get sample point's interpolated vertex normal
+            const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
+            Vector3 sampleVertexNormal = 
+                meshA.vertexNormals[sampleTri.i0] * sample.baryU +
+                meshA.vertexNormals[sampleTri.i1] * sample.baryV +
+                meshA.vertexNormals[sampleTri.i2] * sample.baryW;
+            sampleVertexNormal = sampleVertexNormal.normalized();
+            
+            // Get closest point's interpolated vertex normal
+            const Triangle& closestTri = meshB.tris[result.triangleIndex];
+            Vector3 closestVertexNormal = 
+                meshB.vertexNormals[closestTri.i0] * result.baryU +
+                meshB.vertexNormals[closestTri.i1] * result.baryV +
+                meshB.vertexNormals[closestTri.i2] * result.baryW;
+            closestVertexNormal = closestVertexNormal.normalized();
+            
+            // Compute angle between normals
+            double dotProduct = sampleVertexNormal.dot(closestVertexNormal);
+            dotProduct = std::max(-1.0, std::min(1.0, dotProduct));  // Clamp to [-1, 1] for numerical stability
+            double angleRadians = std::acos(dotProduct);
+            double angleDegrees = angleRadians * 180.0 / 3.14159265358979323846;
+            
+            normalAngles.push_back(angleDegrees);
+            
+            if (angleDegrees > largeNormalAngleThreshold) {
+                largeNormalDevianceCount++;
+            }
         }
     }
     
@@ -294,6 +370,7 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     devianceStats.normalMatchedCount = normalMatchedCount;
     devianceStats.fallbackCount = fallbackCount;
     devianceStats.largeDevianceCount = largeDevianceCount;
+    devianceStats.largeNormalDevianceCount = largeNormalDevianceCount;
     
     // Min and Max deviance
     devianceStats.minDeviance = *std::min_element(distances.begin(), distances.end());
@@ -317,6 +394,33 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
                                         sortedDistances[numSamples / 2]) * 0.5;
     } else {
         devianceStats.medianDeviance = sortedDistances[numSamples / 2];
+    }
+    
+    // Compute normal variance statistics if available
+    if (hasVertexNormals && !normalAngles.empty()) {
+        devianceStats.minNormalAngleDeg = *std::min_element(normalAngles.begin(), normalAngles.end());
+        devianceStats.maxNormalAngleDeg = *std::max_element(normalAngles.begin(), normalAngles.end());
+        
+        double angleSum = 0.0;
+        for (double angle : normalAngles) {
+            angleSum += angle;
+        }
+        devianceStats.averageNormalAngleDeg = angleSum / normalAngles.size();
+        
+        std::vector<double> sortedAngles = normalAngles;
+        std::sort(sortedAngles.begin(), sortedAngles.end());
+        if (normalAngles.size() % 2 == 0) {
+            devianceStats.medianNormalAngleDeg = (sortedAngles[normalAngles.size() / 2 - 1] + 
+                                                  sortedAngles[normalAngles.size() / 2]) * 0.5;
+        } else {
+            devianceStats.medianNormalAngleDeg = sortedAngles[normalAngles.size() / 2];
+        }
+    } else {
+        // No vertex normals available
+        devianceStats.minNormalAngleDeg = 0.0;
+        devianceStats.maxNormalAngleDeg = 0.0;
+        devianceStats.averageNormalAngleDeg = 0.0;
+        devianceStats.medianNormalAngleDeg = 0.0;
     }
     
     return devianceStats;
@@ -388,6 +492,17 @@ void printDevianceStats(const DevianceStats& stats, bool showNormalStats) {
     std::cout << "  Large deviations (>0.0001): " << stats.largeDevianceCount << " samples (" 
               << (100.0f * stats.largeDevianceCount / stats.totalSamples) << "%)" << std::endl;
     
+    // Display normal variance if available
+    if (stats.maxNormalAngleDeg > 0.0) {
+        std::cout << "\nVertex Normal Variance (interpolated):" << std::endl;
+        std::cout << "  Min angle:     " << stats.minNormalAngleDeg << " degrees" << std::endl;
+        std::cout << "  Max angle:     " << stats.maxNormalAngleDeg << " degrees" << std::endl;
+        std::cout << "  Average angle: " << stats.averageNormalAngleDeg << " degrees" << std::endl;
+        std::cout << "  Median angle:  " << stats.medianNormalAngleDeg << " degrees" << std::endl;
+        std::cout << "  Large normal deviations (>15 deg): " << stats.largeNormalDevianceCount << " samples (" 
+                  << (100.0f * stats.largeNormalDevianceCount / stats.totalSamples) << "%)" << std::endl;
+    }
+    
     // Warn about self-comparison issues
     if (stats.averageDeviance > 1e-12 && stats.fallbackCount == 0) {
         std::cout << "\nNote: If comparing identical meshes, non-zero deviance indicates numerical" << std::endl;
@@ -440,6 +555,31 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats) {
               << (100.0 * biStats.aToB.largeDevianceCount / biStats.aToB.totalSamples) << "%)" << std::endl;
     std::cout << "  B -> A: " << biStats.bToA.largeDevianceCount << " samples ("
               << (100.0 * biStats.bToA.largeDevianceCount / biStats.bToA.totalSamples) << "%)" << std::endl;
+    
+    // Display normal variance if available
+    if (biStats.aToB.maxNormalAngleDeg > 0.0 || biStats.bToA.maxNormalAngleDeg > 0.0) {
+        std::cout << "\n=== Vertex Normal Variance (Interpolated) ===" << std::endl;
+        
+        if (biStats.aToB.maxNormalAngleDeg > 0.0) {
+            std::cout << "\nReference -> Test (A -> B):" << std::endl;
+            std::cout << "  Min angle:     " << biStats.aToB.minNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Max angle:     " << biStats.aToB.maxNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Average angle: " << biStats.aToB.averageNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Median angle:  " << biStats.aToB.medianNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Large deviations (>15 deg): " << biStats.aToB.largeNormalDevianceCount << " samples ("
+                      << (100.0 * biStats.aToB.largeNormalDevianceCount / biStats.aToB.totalSamples) << "%)" << std::endl;
+        }
+        
+        if (biStats.bToA.maxNormalAngleDeg > 0.0) {
+            std::cout << "\nTest -> Reference (B -> A):" << std::endl;
+            std::cout << "  Min angle:     " << biStats.bToA.minNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Max angle:     " << biStats.bToA.maxNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Average angle: " << biStats.bToA.averageNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Median angle:  " << biStats.bToA.medianNormalAngleDeg << " degrees" << std::endl;
+            std::cout << "  Large deviations (>15 deg): " << biStats.bToA.largeNormalDevianceCount << " samples ("
+                      << (100.0 * biStats.bToA.largeNormalDevianceCount / biStats.bToA.totalSamples) << "%)" << std::endl;
+        }
+    }
 }
 
 } // namespace MeshGeometricDeviation

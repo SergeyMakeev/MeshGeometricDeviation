@@ -110,9 +110,12 @@ public:
     struct ClosestPointResult {
         Vector3 point;              // The closest point found
         bool matchedNormalConstraint; // True if the result matched the normal constraint
+        unsigned int triangleIndex;  // Index of the triangle containing the closest point
+        double baryU, baryV, baryW;  // Barycentric coordinates of the closest point
         
         ClosestPointResult();
-        ClosestPointResult(const Vector3& p, bool matched);
+        ClosestPointResult(const Vector3& p, bool matched, unsigned int triIdx = 0, 
+                          double u = 0, double v = 0, double w = 0);
     };
 
     SpatialDb();
@@ -126,6 +129,9 @@ public:
     Vector3 getClosestPointOnMeshSurface(const Vector3& queryPoint) const;
     ClosestPointResult getClosestPointOnMeshSurface(const Vector3& queryPoint, const Vector3& desiredNormal, 
                                                      double maxAngleDegrees = 45.0) const;
+    ClosestPointResult getClosestPointDetailed(const Vector3& queryPoint) const;
+    ClosestPointResult getClosestPointDetailedWithNormal(const Vector3& queryPoint, const Vector3& desiredNormal,
+                                                         double maxAngleDegrees = 45.0) const;
     double getDistanceToSurface(const Vector3& queryPoint) const;
 
     // Statistics
@@ -141,9 +147,14 @@ private:
 
     KdNode* buildTree(std::vector<TriangleData>& triangles, int depth);
     Vector3 closestPointOnTriangle(const Vector3& p, const TriangleData& tri, double& distSq) const;
+    Vector3 closestPointOnTriangleWithBary(const Vector3& p, const TriangleData& tri, double& distSq, 
+                                           double& baryU, double& baryV, double& baryW) const;
     void searchNode(const KdNode* node, const Vector3& query, Vector3& closestPoint, double& minDistSq) const;
+    void searchNodeDetailed(const KdNode* node, const Vector3& query, ClosestPointResult& result, double& minDistSq) const;
     void searchNodeWithNormal(const KdNode* node, const Vector3& query, const Vector3& desiredNormal, 
                              double minDotProduct, Vector3& closestPoint, double& minDistSq) const;
+    void searchNodeWithNormalDetailed(const KdNode* node, const Vector3& query, const Vector3& desiredNormal,
+                                     double minDotProduct, ClosestPointResult& result, double& minDistSq) const;
     void collectStats(const KdNode* node, Stats& stats, int depth) const;
 };
 

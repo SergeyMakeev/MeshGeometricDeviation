@@ -11,7 +11,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "\nArguments:" << std::endl;
         std::cerr << "  reference_mesh.obj   - The reference mesh (MeshA)" << std::endl;
         std::cerr << "  test_mesh.obj        - The test mesh to compare against (MeshB)" << std::endl;
-        std::cerr << "  sample_density       - Samples per square unit of surface area (default: 100.0)" << std::endl;
+        std::cerr << "  sample_density       - Samples per square unit of surface area (default: 20.0)" << std::endl;
         std::cerr << "                         Note: Actual sample count is auto-computed based on mesh surface area" << std::endl;
         std::cerr << "                         Each triangle is guaranteed at least one sample point" << std::endl;
         std::cerr << "  max_angle_degrees    - Max angle for normal matching in degrees (default: 45.0)" << std::endl;
@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
     
     std::string meshAFile = argv[1];
     std::string meshBFile = argv[2];
-    double sampleDensity = (argc > 3) ? std::atof(argv[3]) : 100.0;
+    double sampleDensity = (argc > 3) ? std::atof(argv[3]) : 20.0;
     double maxAngleDegrees = (argc > 4) ? std::atof(argv[4]) : 45.0;
     unsigned int seed = (argc > 5) ? static_cast<unsigned int>(std::atoi(argv[5])) : 42;
     
@@ -53,6 +53,12 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: One or both meshes have no triangles" << std::endl;
         return 1;
     }
+    
+    // Compute vertex normals for normal variance analysis
+    std::cout << "\n=== Computing Vertex Normals ===" << std::endl;
+    computeVertexNormals(meshA);
+    computeVertexNormals(meshB);
+    std::cout << "Vertex normals computed for both meshes (for normal variance analysis)" << std::endl;
     
     // Compute number of samples for each mesh based on surface area and density
     std::cout << "\n=== Computing Sample Counts ===" << std::endl;

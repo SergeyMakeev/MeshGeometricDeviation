@@ -8,12 +8,13 @@ A high-performance C++ library for computing geometric deviations between 3D tri
 
 ### Core Library Features
 - **Bidirectional Mesh Comparison** - Detects both missing and extra geometry
+- **Vertex Normal Variance** - Measures angular differences between interpolated surface normals
 - **Automatic Sample Count Computation** - Based on surface area and configurable density
 - **Guaranteed Coverage** - At least one sample per triangle
 - **Reproducible Results** - Fixed random seeds for consistent comparisons
 - **Normal-Aware Queries** - Finds closest points on similarly-oriented surfaces
 - **KD-Tree Spatial Acceleration** - Efficient spatial queries for large meshes
-- **Comprehensive Statistics** - Min, max, average, median, RMSD, and asymmetry metrics
+- **Comprehensive Statistics** - Min, max, average, median, RMSD, normal variance, and asymmetry metrics
 
 ### Library Architecture
 - **Header-only compatible** - Easy integration
@@ -61,8 +62,12 @@ int main() {
     loadObjFile("reference.obj", meshA);
     loadObjFile("test.obj", meshB);
     
+    // Compute vertex normals for normal variance analysis
+    computeVertexNormals(meshA);
+    computeVertexNormals(meshB);
+    
     // Compute sample counts
-    double sampleDensity = 100.0;  // samples per square unit
+    double sampleDensity = 20.0;  // samples per square unit
     int numSamplesA = computeNumSamples(meshA, sampleDensity);
     int numSamplesB = computeNumSamples(meshB, sampleDensity);
     
@@ -83,6 +88,7 @@ int main() {
     std::cout << "Max deviation: " << results.maxDeviance << std::endl;
     std::cout << "RMSD: " << results.rmsd << std::endl;
     std::cout << "Asymmetric: " << (results.isAsymmetric ? "Yes" : "No") << std::endl;
+    std::cout << "Max normal angle: " << results.aToB.maxNormalAngleDeg << " degrees" << std::endl;
     
     return 0;
 }
@@ -99,24 +105,24 @@ mesh_compare <reference.obj> <test.obj> [sample_density] [max_angle] [seed]
 **Parameters:**
 - `reference.obj` - Reference mesh (MeshA)
 - `test.obj` - Test mesh to compare (MeshB)
-- `sample_density` - Samples per square unit (default: 100.0)
+- `sample_density` - Samples per square unit (default: 20.0)
 - `max_angle` - Max angle for normal matching in degrees (default: 45.0)
 - `seed` - Random seed for reproducibility (default: 42)
 
 ### Examples
 
 ```bash
-# Compare with default settings (100 samples/unit², 45° angle, seed 42)
+# Compare with default settings (20 samples/unit^2, 45 deg angle, seed 42)
 mesh_compare original.obj modified.obj
 
 # Higher sample density for more accuracy
-mesh_compare original.obj modified.obj 200
+mesh_compare original.obj modified.obj 100
 
 # Custom angle threshold
-mesh_compare original.obj modified.obj 100 30.0
+mesh_compare original.obj modified.obj 20 30.0
 
 # Custom seed for different sampling pattern
-mesh_compare original.obj modified.obj 100 45.0 123
+mesh_compare original.obj modified.obj 20 45.0 123
 
 # Low density (still guarantees one sample per triangle)
 mesh_compare original.obj modified.obj 1.0
@@ -128,12 +134,16 @@ The tool provides comprehensive statistics:
 
 - **Surface area and computed sample counts** for each mesh
 - **Random seed** used for reproducibility
-- **Bidirectional comparison results** (A→B and B→A):
+- **Bidirectional comparison results** (A->B and B->A):
   - Min deviance (smallest distance found)
   - Max deviance (largest distance found)
   - Average deviance (mean distance)
   - Median deviance (50th percentile distance)
   - RMSD (Root Mean Square Deviation - emphasizes larger errors)
+- **Vertex Normal Variance** - Angular differences between interpolated vertex normals:
+  - Min/max/average/median angles between normals
+  - Count of samples with large normal deviations (>15 deg)
+  - Detects surface orientation changes even when positions are close
 - **Asymmetry analysis** - Detects if deviations are symmetric or indicate holes/extra geometry
 - **Normal constraint statistics** - How many samples matched the orientation constraint
 - **Large deviation counts** - Percentage of samples with significant deviations
@@ -152,7 +162,10 @@ Loads an OBJ file with automatic polygon triangulation.
 ```cpp
 double computeMeshSurfaceArea(const Mesh& mesh);
 int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea);
+void computeVertexNormals(Mesh& mesh);  // Compute area-weighted vertex normals
 ```
+
+Vertex normals are automatically computed from adjacent face normals using area-weighted averaging. This enables the vertex normal variance metric that measures angular differences between surface orientations.
 
 ### Mesh Comparison
 
@@ -187,49 +200,52 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats);
 
 ```
 MeshGeometricDeviation/
-├── include/
-│   └── MeshGeometricDeviation/
-│       ├── MeshComparison.h    # Main comparison API
-│       └── SpatialDb.h          # KD-tree spatial database
-├── src/
-│   ├── MeshComparison.cpp       # Comparison implementation
-│   └── SpatialDb.cpp            # Spatial database implementation
-├── examples/
-│   ├── CMakeLists.txt
-│   └── mesh_compare.cpp         # Command-line tool
-├── models/                      # Sample OBJ files for testing
-├── .github/
-│   └── workflows/
-│       └── ci.yml               # GitHub Actions CI/CD
-├── cmake/
-│   └── Config.cmake.in          # CMake package config
-├── CMakeLists.txt               # Root build configuration
-└── README.md
++-- include/
+|   +-- MeshGeometricDeviation/
+|       +-- MeshComparison.h    # Main comparison API
+|       +-- SpatialDb.h          # KD-tree spatial database
++-- src/
+|   +-- MeshComparison.cpp       # Comparison implementation
+|   +-- SpatialDb.cpp            # Spatial database implementation
++-- examples/
+|   +-- CMakeLists.txt
+|   +-- mesh_compare.cpp         # Command-line tool
++-- models/                      # Sample OBJ files for testing
++-- .github/
+|   +-- workflows/
+|       +-- ci.yml               # GitHub Actions CI/CD
++-- cmake/
+|   +-- Config.cmake.in          # CMake package config
++-- CMakeLists.txt               # Root build configuration
++-- README.md
 ```
 
 ## Algorithm Overview
 
 The library performs **bidirectional comparison** to detect both missing and extra geometry:
 
-### Direction 1: Reference (A) → Test (B)
+### Direction 1: Reference (A) -> Test (B)
 1. **Load Meshes** - Both reference and test meshes loaded from OBJ files
-2. **Compute Sample Counts** - Automatically calculated based on:
+2. **Compute Vertex Normals** - Per-vertex normals calculated using area-weighted averaging
+3. **Compute Sample Counts** - Automatically calculated based on:
    - Surface area of each mesh
    - User-specified sample density (samples per square unit)
    - Minimum guarantee: at least one sample per triangle
-3. **Build Spatial Database** - KD-tree constructed for efficient queries
-4. **Surface Sampling** - Random points generated with:
+4. **Build Spatial Database** - KD-tree constructed for efficient queries
+5. **Surface Sampling** - Random points generated with:
    - **First pass**: One sample per triangle (guaranteed coverage)
    - **Second pass**: Additional samples distributed by area
-   - Barycentric coordinates for uniform distribution
+   - Barycentric coordinates for uniform distribution and normal interpolation
    - Fixed random seed for reproducibility
-5. **Distance Measurement** - For each sample point:
+6. **Distance Measurement** - For each sample point:
    - Query closest point on target mesh surface
    - Use normal-aware search (prefers similarly-oriented triangles)
    - Falls back if no normals match
-6. **Statistical Analysis** - Compute comprehensive statistics
+   - Returns barycentric coordinates for normal interpolation
+7. **Normal Variance Measurement** - Interpolate vertex normals and compute angular differences
+8. **Statistical Analysis** - Compute comprehensive statistics
 
-### Direction 2: Test (B) → Reference (A)
+### Direction 2: Test (B) -> Reference (A)
 - Process repeated in opposite direction with different seed
 - Sample count computed based on mesh B's surface area
 - Detects extra geometry in test mesh
@@ -290,6 +306,8 @@ The project includes GitHub Actions workflows that automatically:
 - **Format conversion** - Validate import/export accuracy
 - **Remeshing analysis** - Quantify remeshing deviation
 - **Mesh repair** - Assess repair quality
+- **Normal map validation** - Verify surface orientation preservation
+- **Smoothing analysis** - Measure how smoothing operations affect surface normals
 
 ## License
 
