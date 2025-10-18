@@ -61,17 +61,12 @@ static SurfaceSample samplePointOnTriangle(const Mesh& mesh, unsigned int triIdx
     return sample;
 }
 
-// Generate area-weighted random samples
-// Ensures each triangle gets at least one sample
-static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, int numSamples, unsigned int seed) {
-    std::vector<SurfaceSample> samples;
-    samples.reserve(numSamples);
-    
-    // Compute individual triangle areas
+// Precompute triangle areas (cache for performance)
+static std::vector<double> computeTriangleAreas(const Mesh& mesh, double& totalArea) {
     std::vector<double> triangleAreas;
     triangleAreas.reserve(mesh.tris.size());
     
-    double totalArea = 0.0;
+    totalArea = 0.0;
     for (const Triangle& tri : mesh.tris) {
         const Vector3 v0 = vertexToVector3(mesh.verts[tri.i0]);
         const Vector3 v1 = vertexToVector3(mesh.verts[tri.i1]);
@@ -84,6 +79,19 @@ static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, 
         triangleAreas.push_back(area);
         totalArea += area;
     }
+    
+    return triangleAreas;
+}
+
+// Generate area-weighted random samples
+// Ensures each triangle gets at least one sample
+static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, int numSamples, unsigned int seed) {
+    std::vector<SurfaceSample> samples;
+    samples.reserve(numSamples);
+    
+    // Compute triangle areas once
+    double totalArea = 0.0;
+    std::vector<double> triangleAreas = computeTriangleAreas(mesh, totalArea);
     
     std::mt19937 rng(seed);
     
@@ -218,17 +226,7 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
 // Compute total surface area of mesh
 double computeMeshSurfaceArea(const Mesh& mesh) {
     double totalArea = 0.0;
-    for (const Triangle& tri : mesh.tris) {
-        const Vector3 v0 = vertexToVector3(mesh.verts[tri.i0]);
-        const Vector3 v1 = vertexToVector3(mesh.verts[tri.i1]);
-        const Vector3 v2 = vertexToVector3(mesh.verts[tri.i2]);
-        
-        Vector3 edge1 = v1 - v0;
-        Vector3 edge2 = v2 - v0;
-        double area = edge1.cross(edge2).length() * 0.5;
-        
-        totalArea += area;
-    }
+    computeTriangleAreas(mesh, totalArea);
     return totalArea;
 }
 
@@ -307,18 +305,15 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     
     // Check if both meshes have vertex normals for normal variance computation
     bool hasVertexNormals = (!meshA.vertexNormals.empty() && !meshB.vertexNormals.empty());
-    if (hasVertexNormals) {
-        std::cout << "Computing vertex normal variance..." << std::endl;
-    }
     
     // Check if both meshes have UVs for UV variance computation
     bool hasUVs = (meshA.uvs.size() > 1 && meshB.uvs.size() > 1);
-    if (hasUVs) {
-        std::cout << "Computing UV variance..." << std::endl;
-    }
     
     // Measure distances
-    std::cout << "Measuring distances..." << std::endl;
+    std::cout << "Measuring distances";
+    if (hasVertexNormals) std::cout << " + normal variance";
+    if (hasUVs) std::cout << " + UV variance";
+    std::cout << "..." << std::endl;
     std::vector<double> distances;
     std::vector<double> normalAngles;  // Angles between interpolated vertex normals (degrees)
     std::vector<double> uvDistances;   // Distances between interpolated UV coordinates
@@ -339,7 +334,17 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     const double largeNormalAngleThreshold = 15.0; // 15 degrees
     const double largeUVThreshold = 0.1; // 0.1 UV units
     
+    // Progress reporting for large datasets
+    const bool showProgress = (numSamples > 100000);
+    const int progressInterval = numSamples / 10;  // Report every 10%
+    int processedSamples = 0;
+    
     for (const SurfaceSample& sample : samples) {
+        // Progress indicator for large meshes
+        if (showProgress && (processedSamples % progressInterval == 0)) {
+            std::cout << "  Progress: " << (processedSamples * 100 / numSamples) << "%" << std::endl;
+        }
+        processedSamples++;
         double distance;
         SpatialDb::ClosestPointResult result;
         
@@ -368,37 +373,34 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         }
         
         // Compute normal variance if both meshes have vertex normals
+        // Cache triangle lookups to improve performance
         if (hasVertexNormals) {
-            // Get sample point's interpolated vertex normal
             const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
+            const Triangle& closestTri = meshB.tris[result.triangleIndex];
+            
+            // Interpolate normals using barycentric coordinates
             Vector3 sampleVertexNormal = 
                 meshA.vertexNormals[sampleTri.i0] * sample.baryU +
                 meshA.vertexNormals[sampleTri.i1] * sample.baryV +
                 meshA.vertexNormals[sampleTri.i2] * sample.baryW;
             sampleVertexNormal = sampleVertexNormal.normalized();
             
-            // Get closest point's interpolated vertex normal
-            const Triangle& closestTri = meshB.tris[result.triangleIndex];
             Vector3 closestVertexNormal = 
                 meshB.vertexNormals[closestTri.i0] * result.baryU +
                 meshB.vertexNormals[closestTri.i1] * result.baryV +
                 meshB.vertexNormals[closestTri.i2] * result.baryW;
             closestVertexNormal = closestVertexNormal.normalized();
             
-            // Compute angle between normals
-            double dotProduct = sampleVertexNormal.dot(closestVertexNormal);
-            dotProduct = std::max(-1.0, std::min(1.0, dotProduct));  // Clamp to [-1, 1] for numerical stability
-            double angleRadians = std::acos(dotProduct);
-            double angleDegrees = angleRadians * 180.0 / 3.14159265358979323846;
+            // Compute angle between normals (optimized)
+            double dotProduct = std::max(-1.0, std::min(1.0, sampleVertexNormal.dot(closestVertexNormal)));
+            double angleDegrees = std::acos(dotProduct) * 57.2957795131;  // Rad to deg constant
             
             normalAngles.push_back(angleDegrees);
-            
-            if (angleDegrees > largeNormalAngleThreshold) {
-                largeNormalDevianceCount++;
-            }
+            largeNormalDevianceCount += (angleDegrees > largeNormalAngleThreshold) ? 1 : 0;
         }
         
         // Compute UV variance if both meshes have UVs
+        // Use cached triangle references from normal variance if available
         if (hasUVs) {
             const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
             const Triangle& closestTri = meshB.tris[result.triangleIndex];
@@ -407,42 +409,34 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
             if (sampleTri.t0 > 0 && sampleTri.t1 > 0 && sampleTri.t2 > 0 &&
                 closestTri.t0 > 0 && closestTri.t1 > 0 && closestTri.t2 > 0) {
                 
-                // Get sample point's interpolated UV
-                const UV& uv0_sample = meshA.uvs[sampleTri.t0];
-                const UV& uv1_sample = meshA.uvs[sampleTri.t1];
-                const UV& uv2_sample = meshA.uvs[sampleTri.t2];
+                // Interpolate UVs directly (optimized)
+                const UV& uv0_s = meshA.uvs[sampleTri.t0];
+                const UV& uv1_s = meshA.uvs[sampleTri.t1];
+                const UV& uv2_s = meshA.uvs[sampleTri.t2];
                 
-                double sampleU = uv0_sample.u * sample.baryU + 
-                                uv1_sample.u * sample.baryV + 
-                                uv2_sample.u * sample.baryW;
-                double sampleV = uv0_sample.v * sample.baryU + 
-                                uv1_sample.v * sample.baryV + 
-                                uv2_sample.v * sample.baryW;
+                double sampleU = uv0_s.u * sample.baryU + uv1_s.u * sample.baryV + uv2_s.u * sample.baryW;
+                double sampleV = uv0_s.v * sample.baryU + uv1_s.v * sample.baryV + uv2_s.v * sample.baryW;
                 
-                // Get closest point's interpolated UV
-                const UV& uv0_closest = meshB.uvs[closestTri.t0];
-                const UV& uv1_closest = meshB.uvs[closestTri.t1];
-                const UV& uv2_closest = meshB.uvs[closestTri.t2];
+                const UV& uv0_c = meshB.uvs[closestTri.t0];
+                const UV& uv1_c = meshB.uvs[closestTri.t1];
+                const UV& uv2_c = meshB.uvs[closestTri.t2];
                 
-                double closestU = uv0_closest.u * result.baryU + 
-                                 uv1_closest.u * result.baryV + 
-                                 uv2_closest.u * result.baryW;
-                double closestV = uv0_closest.v * result.baryU + 
-                                 uv1_closest.v * result.baryV + 
-                                 uv2_closest.v * result.baryW;
+                double closestU = uv0_c.u * result.baryU + uv1_c.u * result.baryV + uv2_c.u * result.baryW;
+                double closestV = uv0_c.v * result.baryU + uv1_c.v * result.baryV + uv2_c.v * result.baryW;
                 
-                // Compute UV distance
+                // Compute UV distance (optimized)
                 double du = sampleU - closestU;
                 double dv = sampleV - closestV;
                 double uvDistance = std::sqrt(du * du + dv * dv);
                 
                 uvDistances.push_back(uvDistance);
-                
-                if (uvDistance > largeUVThreshold) {
-                    largeUVDevianceCount++;
-                }
+                largeUVDevianceCount += (uvDistance > largeUVThreshold) ? 1 : 0;
             }
         }
+    }
+    
+    if (showProgress) {
+        std::cout << "  Progress: 100%" << std::endl;
     }
     
     // Compute statistics
@@ -1045,7 +1039,7 @@ void exportDebugVisualization(const std::string& filename,
     }
     Vector3 bboxExtent = bboxMax - bboxMin;
     double bboxDiagonal = bboxExtent.length();
-    double baseSphereRadius = bboxDiagonal * 0.005;  // 0.5% of bounding box diagonal
+    double baseSphereRadius = bboxDiagonal * 0.0005;  // 0.05% of bounding box diagonal
     if (baseSphereRadius < 0.1) baseSphereRadius = 0.1;
     
     // Export max distance spheres (sample point = larger, surface = smaller, separate groups)

@@ -128,10 +128,10 @@ public:
     // Query methods
     Vector3 getClosestPointOnMeshSurface(const Vector3& queryPoint) const;
     ClosestPointResult getClosestPointOnMeshSurface(const Vector3& queryPoint, const Vector3& desiredNormal, 
-                                                     double maxAngleDegrees = 45.0) const;
+                                                     double maxAngleDegrees = 180.0) const;
     ClosestPointResult getClosestPointDetailed(const Vector3& queryPoint) const;
     ClosestPointResult getClosestPointDetailedWithNormal(const Vector3& queryPoint, const Vector3& desiredNormal,
-                                                         double maxAngleDegrees = 45.0) const;
+                                                         double maxAngleDegrees = 180.0) const;
     double getDistanceToSurface(const Vector3& queryPoint) const;
 
     // Statistics

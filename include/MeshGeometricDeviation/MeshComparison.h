@@ -86,7 +86,7 @@ void computeVertexNormals(Mesh& mesh);  // Compute per-vertex normals from adjac
 
 // Mesh comparison
 DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples, 
-                            double maxAngleDegrees = 45.0, bool useAreaWeighting = true, 
+                            double maxAngleDegrees = 180.0, bool useAreaWeighting = true, 
                             bool useNormalFiltering = true, unsigned int seed = 42);
 
 BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const Mesh& meshB, 
