@@ -237,6 +237,52 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
         mesh.uvs.push_back(uv);
     }
     
+    // Load normals from OBJ file if available
+    // OBJ normals are per-corner (indexed), we need to convert to per-vertex
+    // Note: fast_obj adds a dummy normal at index 0, so normal_count > 1 means actual normals exist
+    bool hasNormals = (obj->normal_count > 1);
+    if (hasNormals) {
+        // Initialize per-vertex normal accumulation
+        std::vector<Vector3> normalAccum(obj->position_count, Vector3(0, 0, 0));
+        std::vector<int> normalCount(obj->position_count, 0);
+        
+        // Accumulate normals for each vertex from all its uses
+        unsigned int faceVertexOffset = 0;
+        for (unsigned int faceIdx = 0; faceIdx < obj->face_count; faceIdx++) {
+            unsigned int vertCount = obj->face_vertices[faceIdx];
+            
+            for (unsigned int i = 0; i < vertCount; i++) {
+                unsigned int posIdx = obj->indices[faceVertexOffset + i].p;
+                unsigned int normIdx = obj->indices[faceVertexOffset + i].n;
+                
+                // If this vertex has a normal specified
+                if (normIdx > 0 && normIdx <= obj->normal_count) {
+                    Vector3 normal(
+                        obj->normals[3 * (normIdx - 1) + 0],
+                        obj->normals[3 * (normIdx - 1) + 1],
+                        obj->normals[3 * (normIdx - 1) + 2]
+                    );
+                    normalAccum[posIdx] = normalAccum[posIdx] + normal;
+                    normalCount[posIdx]++;
+                }
+            }
+            
+            faceVertexOffset += vertCount;
+        }
+        
+        // Average and normalize the accumulated normals
+        mesh.vertexNormals.reserve(obj->position_count);
+        for (unsigned int i = 0; i < obj->position_count; i++) {
+            if (normalCount[i] > 0) {
+                Vector3 avgNormal = normalAccum[i] * (1.0 / normalCount[i]);
+                mesh.vertexNormals.push_back(avgNormal.normalized());
+            } else {
+                // Vertex had no normal specified, use zero (will be computed later if needed)
+                mesh.vertexNormals.push_back(Vector3(0, 0, 0));
+            }
+        }
+    }
+    
     // Load triangles
     unsigned int faceVertexOffset = 0;
     for (unsigned int faceIdx = 0; faceIdx < obj->face_count; faceIdx++) {
@@ -274,6 +320,11 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
     log(LogLevel::Info, "  Vertices: %zu\n", mesh.verts.size());
     log(LogLevel::Info, "  Triangles: %zu\n", mesh.tris.size());
     log(LogLevel::Debug, "  UVs: %zu\n", mesh.uvs.size() - 1);  // -1 to exclude default UV
+    if (hasNormals) {
+        log(LogLevel::Info, "  Vertex normals: %zu (loaded from file)\n", mesh.vertexNormals.size());
+    } else {
+        log(LogLevel::Info, "  Vertex normals: none (will be computed if needed)\n");
+    }
     
     return true;
 }

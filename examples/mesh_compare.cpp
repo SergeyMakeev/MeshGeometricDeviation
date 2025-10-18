@@ -67,11 +67,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Compute vertex normals for normal variance analysis
-    std::cout << "\n=== Computing Vertex Normals ===" << std::endl;
-    computeVertexNormals(meshA);
-    computeVertexNormals(meshB);
-    std::cout << "Vertex normals computed for both meshes (for normal variance analysis)" << std::endl;
+    // Compute vertex normals for normal variance analysis (only if not loaded from file)
+    std::cout << "\n=== Vertex Normals ===" << std::endl;
+    if (meshA.vertexNormals.empty()) {
+        std::cout << "Computing vertex normals for reference mesh (not provided in OBJ file)..." << std::endl;
+        computeVertexNormals(meshA);
+    } else {
+        std::cout << "Reference mesh: Using vertex normals from OBJ file" << std::endl;
+    }
+    
+    if (meshB.vertexNormals.empty()) {
+        std::cout << "Computing vertex normals for test mesh (not provided in OBJ file)..." << std::endl;
+        computeVertexNormals(meshB);
+    } else {
+        std::cout << "Test mesh: Using vertex normals from OBJ file" << std::endl;
+    }
     
     // Compute number of samples for each mesh based on surface area and density
     std::cout << "\n=== Computing Sample Counts ===" << std::endl;
