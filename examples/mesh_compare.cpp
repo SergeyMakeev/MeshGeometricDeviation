@@ -7,7 +7,7 @@ int main(int argc, char* argv[]) {
     std::cout << "=== Mesh Deviance Comparison Tool ===" << std::endl;
     
     if (argc < 3) {
-        std::cerr << "\nUsage: " << argv[0] << " <reference_mesh.obj> <test_mesh.obj> [sample_density] [max_angle_degrees] [seed]" << std::endl;
+        std::cerr << "\nUsage: " << argv[0] << " <reference_mesh.obj> <test_mesh.obj> [sample_density] [max_angle_degrees] [seed] [--debug output.obj]" << std::endl;
         std::cerr << "\nArguments:" << std::endl;
         std::cerr << "  reference_mesh.obj   - The reference mesh (MeshA)" << std::endl;
         std::cerr << "  test_mesh.obj        - The test mesh to compare against (MeshB)" << std::endl;
@@ -16,6 +16,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "                         Each triangle is guaranteed at least one sample point" << std::endl;
         std::cerr << "  max_angle_degrees    - Max angle for normal matching in degrees (default: 45.0)" << std::endl;
         std::cerr << "  seed                 - Random seed for reproducible results (default: 42)" << std::endl;
+        std::cerr << "  --debug output.obj   - Export debug visualization with extreme deviation points" << std::endl;
         std::cerr << "\nNote: Comparison is always bidirectional, sampling both meshes and comparing in both directions." << std::endl;
         std::cerr << "      This detects missing geometry (holes) and extra geometry." << std::endl;
         return 1;
@@ -26,6 +27,18 @@ int main(int argc, char* argv[]) {
     double sampleDensity = (argc > 3) ? std::atof(argv[3]) : 20.0;
     double maxAngleDegrees = (argc > 4) ? std::atof(argv[4]) : 45.0;
     unsigned int seed = (argc > 5) ? static_cast<unsigned int>(std::atoi(argv[5])) : 42;
+    
+    // Check for debug flag
+    std::string debugOutputFile;
+    bool exportDebug = false;
+    for (int i = 1; i < argc - 1; i++) {
+        std::string arg = argv[i];
+        if (arg == "--debug" && i + 1 < argc) {
+            exportDebug = true;
+            debugOutputFile = argv[i + 1];
+            break;
+        }
+    }
     
     // Validate parameters
     if (sampleDensity <= 0.0) {
@@ -86,6 +99,11 @@ int main(int argc, char* argv[]) {
     // Compare meshes (always bidirectional)
     BidirectionalDevianceStats biStats = compareMeshesBidirectional(meshA, meshB, numSamplesA, numSamplesB, maxAngleDegrees, true, true, seed);
     printBidirectionalStats(biStats);
+    
+    // Export debug visualization if requested
+    if (exportDebug) {
+        exportDebugVisualization(debugOutputFile, meshA, meshB, numSamplesA, numSamplesB, maxAngleDegrees, seed);
+    }
     
     std::cout << "\n=== Comparison Complete ===" << std::endl;
     

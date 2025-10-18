@@ -9,12 +9,13 @@ A high-performance C++ library for computing geometric deviations between 3D tri
 ### Core Library Features
 - **Bidirectional Mesh Comparison** - Detects both missing and extra geometry
 - **Vertex Normal Variance** - Measures angular differences between interpolated surface normals
+- **UV Coordinate Variance** - Measures texture coordinate differences between corresponding points
 - **Automatic Sample Count Computation** - Based on surface area and configurable density
 - **Guaranteed Coverage** - At least one sample per triangle
 - **Reproducible Results** - Fixed random seeds for consistent comparisons
 - **Normal-Aware Queries** - Finds closest points on similarly-oriented surfaces
 - **KD-Tree Spatial Acceleration** - Efficient spatial queries for large meshes
-- **Comprehensive Statistics** - Min, max, average, median, RMSD, normal variance, and asymmetry metrics
+- **Comprehensive Statistics** - Position, normal, and UV variance with full statistical analysis
 
 ### Library Architecture
 - **Header-only compatible** - Easy integration
@@ -144,6 +145,10 @@ The tool provides comprehensive statistics:
   - Min/max/average/median angles between normals
   - Count of samples with large normal deviations (>15 deg)
   - Detects surface orientation changes even when positions are close
+- **UV Coordinate Variance** - Distance between interpolated UV coordinates:
+  - Min/max/average/median UV distances
+  - Count of samples with large UV deviations (>0.1)
+  - Detects texture mapping changes and seam issues
 - **Asymmetry analysis** - Detects if deviations are symmetric or indicate holes/extra geometry
 - **Normal constraint statistics** - How many samples matched the orientation constraint
 - **Large deviation counts** - Percentage of samples with significant deviations
@@ -225,7 +230,7 @@ MeshGeometricDeviation/
 The library performs **bidirectional comparison** to detect both missing and extra geometry:
 
 ### Direction 1: Reference (A) -> Test (B)
-1. **Load Meshes** - Both reference and test meshes loaded from OBJ files
+1. **Load Meshes** - Both reference and test meshes loaded from OBJ files with UV coordinates
 2. **Compute Vertex Normals** - Per-vertex normals calculated using area-weighted averaging
 3. **Compute Sample Counts** - Automatically calculated based on:
    - Surface area of each mesh
@@ -243,7 +248,8 @@ The library performs **bidirectional comparison** to detect both missing and ext
    - Falls back if no normals match
    - Returns barycentric coordinates for normal interpolation
 7. **Normal Variance Measurement** - Interpolate vertex normals and compute angular differences
-8. **Statistical Analysis** - Compute comprehensive statistics
+8. **UV Variance Measurement** - Interpolate UV coordinates and compute distance between them
+9. **Statistical Analysis** - Compute comprehensive statistics for position, normal, and UV variance
 
 ### Direction 2: Test (B) -> Reference (A)
 - Process repeated in opposite direction with different seed
@@ -308,6 +314,8 @@ The project includes GitHub Actions workflows that automatically:
 - **Mesh repair** - Assess repair quality
 - **Normal map validation** - Verify surface orientation preservation
 - **Smoothing analysis** - Measure how smoothing operations affect surface normals
+- **UV unwrapping validation** - Check texture coordinate consistency
+- **Texture atlas changes** - Detect UV mapping modifications
 
 ## License
 

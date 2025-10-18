@@ -16,13 +16,21 @@ struct Vertex
 
 struct Triangle
 {
-    unsigned int i0, i1, i2;
+    unsigned int i0, i1, i2;  // Vertex indices
+    unsigned int t0, t1, t2;  // Texture coordinate indices (0 if no UVs)
+};
+
+struct UV
+{
+    float u;
+    float v;
 };
 
 struct Mesh
 {
     std::vector<Vertex> verts;
     std::vector<Triangle> tris;
+    std::vector<UV> uvs;                 // Texture coordinates
     std::vector<Vector3> vertexNormals;  // Per-vertex normals (computed from adjacent faces)
     std::string name;
 };
@@ -45,6 +53,13 @@ struct DevianceStats {
     double averageNormalAngleDeg;    // Average angle between normals (degrees)
     double medianNormalAngleDeg;     // Median angle between normals (degrees)
     int largeNormalDevianceCount;    // Count of samples with angle > 15 degrees
+    
+    // UV variance metrics
+    double minUVDistance;            // Minimum distance between UV coordinates
+    double maxUVDistance;            // Maximum distance between UV coordinates
+    double averageUVDistance;        // Average distance between UV coordinates
+    double medianUVDistance;         // Median distance between UV coordinates
+    int largeUVDevianceCount;        // Count of samples with UV distance > 0.1
 };
 
 // Bidirectional comparison results
@@ -84,6 +99,13 @@ BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const M
 // Output functions
 void printDevianceStats(const DevianceStats& stats, bool showNormalStats = true);
 void printBidirectionalStats(const BidirectionalDevianceStats& biStats);
+
+// Debug/Visualization functions
+void exportDebugVisualization(const std::string& filename,
+                              const Mesh& meshA, const Mesh& meshB,
+                              int numSamplesA, int numSamplesB,
+                              double maxAngleDegrees = 45.0,
+                              unsigned int baseSeed = 42);
 
 } // namespace MeshGeometricDeviation
 

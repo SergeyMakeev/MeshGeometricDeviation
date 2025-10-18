@@ -1,0 +1,1 @@
+build\examples\Release\mesh_compare.exe models\test.obj models\test_lod.obj 20 180 42 --debug diff.obj
