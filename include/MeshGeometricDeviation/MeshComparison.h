@@ -60,6 +60,23 @@ struct Mesh
     std::string name;
 };
 
+// Extreme case data for debug visualization
+struct ExtremeCase {
+    Vector3 samplePosition;       // Position of the sample point
+    Vector3 closestPosition;      // Position of the closest point found
+    unsigned int sampleTriIndex;  // Triangle index in source mesh
+    unsigned int closestTriIndex; // Triangle index in target mesh
+    double sampleBaryU, sampleBaryV, sampleBaryW;   // Barycentric coords of sample
+    double closestBaryU, closestBaryV, closestBaryW; // Barycentric coords of closest point
+    double value;                 // The actual value (distance, angle, etc.)
+    
+    ExtremeCase() : samplePosition(0,0,0), closestPosition(0,0,0), 
+                   sampleTriIndex(0), closestTriIndex(0),
+                   sampleBaryU(0), sampleBaryV(0), sampleBaryW(0),
+                   closestBaryU(0), closestBaryV(0), closestBaryW(0),
+                   value(0) {}
+};
+
 // Deviance statistics
 struct DevianceStats {
     double minDeviance;
@@ -85,6 +102,11 @@ struct DevianceStats {
     double averageUVDistance;        // Average distance between UV coordinates
     double medianUVDistance;         // Median distance between UV coordinates
     int largeUVDevianceCount;        // Count of samples with UV distance > 0.1
+    
+    // Extreme cases for debug visualization
+    ExtremeCase maxDistanceCase;     // Case with maximum geometric distance
+    ExtremeCase maxNormalAngleCase;  // Case with maximum normal angle deviation
+    ExtremeCase maxUVDistanceCase;   // Case with maximum UV distance
 };
 
 // Bidirectional comparison results
@@ -128,9 +150,7 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats);
 // Debug/Visualization functions
 void exportDebugVisualization(const std::string& filename,
                               const Mesh& meshA, const Mesh& meshB,
-                              int numSamplesA, int numSamplesB,
-                              double maxAngleDegrees = 45.0,
-                              unsigned int baseSeed = 42);
+                              const BidirectionalDevianceStats& biStats);
 
 } // namespace MeshGeometricDeviation
 

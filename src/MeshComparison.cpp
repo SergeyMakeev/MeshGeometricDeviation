@@ -272,14 +272,27 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
         
         // Average and normalize the accumulated normals
         mesh.vertexNormals.reserve(obj->position_count);
+        bool hasInvalidNormals = false;
         for (unsigned int i = 0; i < obj->position_count; i++) {
             if (normalCount[i] > 0) {
                 Vector3 avgNormal = normalAccum[i] * (1.0 / normalCount[i]);
                 mesh.vertexNormals.push_back(avgNormal.normalized());
             } else {
-                // Vertex had no normal specified, use zero (will be computed later if needed)
+                // Vertex had no normal specified
+                // Skip vertex 0 in the check (it's a dummy vertex added by fast_obj)
+                if (i > 0) {
+                    hasInvalidNormals = true;
+                }
                 mesh.vertexNormals.push_back(Vector3(0, 0, 0));
             }
+        }
+        
+        // If any actual vertices (not the dummy at index 0) are missing normals,
+        // the OBJ file has incomplete normal data - clear them so they'll be computed
+        if (hasInvalidNormals) {
+            log(LogLevel::Info, "  Warning: Some vertices missing normals, will compute from geometry\n");
+            mesh.vertexNormals.clear();
+            hasNormals = false;
         }
     }
     
@@ -451,6 +464,11 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     const double largeNormalAngleThreshold = 15.0; // 15 degrees
     const double largeUVThreshold = 0.1; // 0.1 UV units
     
+    // Track extreme cases for debug visualization
+    ExtremeCase maxDistanceCase;
+    ExtremeCase maxNormalAngleCase;
+    ExtremeCase maxUVDistanceCase;
+    
     for (const SurfaceSample& sample : samples) {
         double distance;
         SpatialDb::ClosestPointResult result;
@@ -479,6 +497,21 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
             largeDevianceCount++;
         }
         
+        // Track max distance case
+        if (distance > maxDistanceCase.value) {
+            maxDistanceCase.samplePosition = sample.position;
+            maxDistanceCase.closestPosition = result.point;
+            maxDistanceCase.sampleTriIndex = sample.triangleIndex;
+            maxDistanceCase.closestTriIndex = result.triangleIndex;
+            maxDistanceCase.sampleBaryU = sample.baryU;
+            maxDistanceCase.sampleBaryV = sample.baryV;
+            maxDistanceCase.sampleBaryW = sample.baryW;
+            maxDistanceCase.closestBaryU = result.baryU;
+            maxDistanceCase.closestBaryV = result.baryV;
+            maxDistanceCase.closestBaryW = result.baryW;
+            maxDistanceCase.value = distance;
+        }
+        
         // Compute normal variance if both meshes have vertex normals
         // Cache triangle lookups to improve performance
         if (hasVertexNormals) {
@@ -504,6 +537,21 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
             
             normalAngles.push_back(angleDegrees);
             largeNormalDevianceCount += (angleDegrees > largeNormalAngleThreshold) ? 1 : 0;
+            
+            // Track max normal angle case
+            if (angleDegrees > maxNormalAngleCase.value) {
+                maxNormalAngleCase.samplePosition = sample.position;
+                maxNormalAngleCase.closestPosition = result.point;
+                maxNormalAngleCase.sampleTriIndex = sample.triangleIndex;
+                maxNormalAngleCase.closestTriIndex = result.triangleIndex;
+                maxNormalAngleCase.sampleBaryU = sample.baryU;
+                maxNormalAngleCase.sampleBaryV = sample.baryV;
+                maxNormalAngleCase.sampleBaryW = sample.baryW;
+                maxNormalAngleCase.closestBaryU = result.baryU;
+                maxNormalAngleCase.closestBaryV = result.baryV;
+                maxNormalAngleCase.closestBaryW = result.baryW;
+                maxNormalAngleCase.value = angleDegrees;
+            }
         }
         
         // Compute UV variance if both meshes have UVs
@@ -538,6 +586,21 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
                 
                 uvDistances.push_back(uvDistance);
                 largeUVDevianceCount += (uvDistance > largeUVThreshold) ? 1 : 0;
+                
+                // Track max UV distance case
+                if (uvDistance > maxUVDistanceCase.value) {
+                    maxUVDistanceCase.samplePosition = sample.position;
+                    maxUVDistanceCase.closestPosition = result.point;
+                    maxUVDistanceCase.sampleTriIndex = sample.triangleIndex;
+                    maxUVDistanceCase.closestTriIndex = result.triangleIndex;
+                    maxUVDistanceCase.sampleBaryU = sample.baryU;
+                    maxUVDistanceCase.sampleBaryV = sample.baryV;
+                    maxUVDistanceCase.sampleBaryW = sample.baryW;
+                    maxUVDistanceCase.closestBaryU = result.baryU;
+                    maxUVDistanceCase.closestBaryV = result.baryV;
+                    maxUVDistanceCase.closestBaryW = result.baryW;
+                    maxUVDistanceCase.value = uvDistance;
+                }
             }
         }
     }
@@ -636,6 +699,11 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         devianceStats.averageUVDistance = 0.0;
         devianceStats.medianUVDistance = 0.0;
     }
+    
+    // Store extreme cases for debug visualization
+    devianceStats.maxDistanceCase = maxDistanceCase;
+    devianceStats.maxNormalAngleCase = maxNormalAngleCase;
+    devianceStats.maxUVDistanceCase = maxUVDistanceCase;
     
     auto t_end_stats = std::chrono::high_resolution_clock::now();
     double time_stats = std::chrono::duration<double>(t_end_stats - t_start_stats).count();
@@ -886,224 +954,42 @@ static void generateSphere(std::ofstream& out, const Vector3& center, double rad
 // Export debug visualization showing meshes and extreme deviation points
 void exportDebugVisualization(const std::string& filename,
                               const Mesh& meshA, const Mesh& meshB,
-                              int numSamplesA, int numSamplesB,
-                              double maxAngleDegrees,
-                              unsigned int baseSeed) {
+                              const BidirectionalDevianceStats& biStats) {
     
     log(LogLevel::Info, "\n=== Generating Debug Visualization ===\n");
+    log(LogLevel::Info, "Using pre-computed comparison results (Direction A->B)\n");
     
-    // Build spatial database for meshB
-    SpatialDb spatialDb(meshB);
-    
-    // Generate samples on meshA
-    std::vector<SurfaceSample> samples = generateAreaWeightedSamples(meshA, numSamplesA, baseSeed);
-    
-    // Track extreme cases
-    struct ExtremeCase {
-        SurfaceSample sample;
-        SpatialDb::ClosestPointResult closestResult;
-        double distance;
-        double normalAngle;
-        double uvDistance;
-    };
-    
-    ExtremeCase maxDistanceCase;
-    ExtremeCase maxNormalAngleCase;
-    ExtremeCase maxUVDistanceCase;
-    
-    // Initialize with invalid values
-    maxDistanceCase.distance = 0.0;
-    maxDistanceCase.sample.position = Vector3(0, 0, 0);
-    maxDistanceCase.closestResult.point = Vector3(0, 0, 0);
-    
-    maxNormalAngleCase.normalAngle = 0.0;
-    maxNormalAngleCase.sample.position = Vector3(0, 0, 0);
-    maxNormalAngleCase.closestResult.point = Vector3(0, 0, 0);
-    
-    maxUVDistanceCase.uvDistance = 0.0;
-    maxUVDistanceCase.sample.position = Vector3(0, 0, 0);
-    maxUVDistanceCase.closestResult.point = Vector3(0, 0, 0);
+    // Get extreme cases from A->B comparison
+    const ExtremeCase& maxDistanceCase = biStats.aToB.maxDistanceCase;
+    const ExtremeCase& maxNormalAngleCase = biStats.aToB.maxNormalAngleCase;
+    const ExtremeCase& maxUVDistanceCase = biStats.aToB.maxUVDistanceCase;
     
     bool hasVertexNormals = (!meshA.vertexNormals.empty() && !meshB.vertexNormals.empty());
     bool hasUVs = (meshA.uvs.size() > 1 && meshB.uvs.size() > 1);
     
-    log(LogLevel::Debug, "Analyzing %d samples...\n", numSamplesA);
-    log(LogLevel::Debug, "Has vertex normals: %s\n", hasVertexNormals ? "Yes" : "No");
-    log(LogLevel::Debug, "Has UVs: %s\n", hasUVs ? "Yes" : "No");
+    // Print diagnostic information from pre-computed extreme cases
+    log(LogLevel::Info, "\n=== Extreme Cases (from comparison) ===\n");
     
-    for (const SurfaceSample& sample : samples) {
-        SpatialDb::ClosestPointResult result = spatialDb.getClosestPointDetailedWithNormal(
-            sample.position, sample.normal, maxAngleDegrees);
-        
-        double distance = (result.point - sample.position).length();
-        
-        // Track max distance
-        if (distance > maxDistanceCase.distance) {
-            maxDistanceCase.sample = sample;
-            maxDistanceCase.closestResult = result;
-            maxDistanceCase.distance = distance;
-        }
-        
-        // Compute normal angle if available
-        if (hasVertexNormals) {
-            const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
-            Vector3 sampleVertexNormal = 
-                meshA.vertexNormals[sampleTri.i0] * sample.baryU +
-                meshA.vertexNormals[sampleTri.i1] * sample.baryV +
-                meshA.vertexNormals[sampleTri.i2] * sample.baryW;
-            sampleVertexNormal = sampleVertexNormal.normalized();
-            
-            const Triangle& closestTri = meshB.tris[result.triangleIndex];
-            Vector3 closestVertexNormal = 
-                meshB.vertexNormals[closestTri.i0] * result.baryU +
-                meshB.vertexNormals[closestTri.i1] * result.baryV +
-                meshB.vertexNormals[closestTri.i2] * result.baryW;
-            closestVertexNormal = closestVertexNormal.normalized();
-            
-            double dotProduct = sampleVertexNormal.dot(closestVertexNormal);
-            dotProduct = std::max(-1.0, std::min(1.0, dotProduct));
-            double angleRadians = std::acos(dotProduct);
-            double angleDegrees = angleRadians * 180.0 / 3.14159265358979323846;
-            
-            if (angleDegrees > maxNormalAngleCase.normalAngle) {
-                maxNormalAngleCase.sample = sample;
-                maxNormalAngleCase.closestResult = result;
-                maxNormalAngleCase.distance = distance;
-                maxNormalAngleCase.normalAngle = angleDegrees;
-            }
-        }
-        
-        // Compute UV distance if available
-        if (hasUVs) {
-            const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
-            const Triangle& closestTri = meshB.tris[result.triangleIndex];
-            
-            if (sampleTri.t0 > 0 && sampleTri.t1 > 0 && sampleTri.t2 > 0 &&
-                closestTri.t0 > 0 && closestTri.t1 > 0 && closestTri.t2 > 0) {
-                
-                const UV& uv0_sample = meshA.uvs[sampleTri.t0];
-                const UV& uv1_sample = meshA.uvs[sampleTri.t1];
-                const UV& uv2_sample = meshA.uvs[sampleTri.t2];
-                
-                double sampleU = uv0_sample.u * sample.baryU + 
-                                uv1_sample.u * sample.baryV + 
-                                uv2_sample.u * sample.baryW;
-                double sampleV = uv0_sample.v * sample.baryU + 
-                                uv1_sample.v * sample.baryV + 
-                                uv2_sample.v * sample.baryW;
-                
-                const UV& uv0_closest = meshB.uvs[closestTri.t0];
-                const UV& uv1_closest = meshB.uvs[closestTri.t1];
-                const UV& uv2_closest = meshB.uvs[closestTri.t2];
-                
-                double closestU = uv0_closest.u * result.baryU + 
-                                 uv1_closest.u * result.baryV + 
-                                 uv2_closest.u * result.baryW;
-                double closestV = uv0_closest.v * result.baryU + 
-                                 uv1_closest.v * result.baryV + 
-                                 uv2_closest.v * result.baryW;
-                
-                double du = sampleU - closestU;
-                double dv = sampleV - closestV;
-                double uvDistance = std::sqrt(du * du + dv * dv);
-                
-                if (uvDistance > maxUVDistanceCase.uvDistance) {
-                    maxUVDistanceCase.sample = sample;
-                    maxUVDistanceCase.closestResult = result;
-                    maxUVDistanceCase.distance = distance;
-                    maxUVDistanceCase.uvDistance = uvDistance;
-                }
-            }
-        }
+    log(LogLevel::Info, "\nMax Distance: %g\n", maxDistanceCase.value);
+    log(LogLevel::Debug, "  Sample position: (%g, %g, %g)\n", 
+        maxDistanceCase.samplePosition.x, maxDistanceCase.samplePosition.y, maxDistanceCase.samplePosition.z);
+    log(LogLevel::Debug, "  Closest position: (%g, %g, %g)\n", 
+        maxDistanceCase.closestPosition.x, maxDistanceCase.closestPosition.y, maxDistanceCase.closestPosition.z);
+    
+    if (hasVertexNormals && maxNormalAngleCase.value > 0.0) {
+        log(LogLevel::Info, "\nMax Normal Angle: %g degrees\n", maxNormalAngleCase.value);
+        log(LogLevel::Debug, "  Sample position: (%g, %g, %g)\n", 
+            maxNormalAngleCase.samplePosition.x, maxNormalAngleCase.samplePosition.y, maxNormalAngleCase.samplePosition.z);
+        log(LogLevel::Debug, "  Closest position: (%g, %g, %g)\n", 
+            maxNormalAngleCase.closestPosition.x, maxNormalAngleCase.closestPosition.y, maxNormalAngleCase.closestPosition.z);
     }
     
-    // Print diagnostic information
-    log(LogLevel::Info, "\n=== Diagnostic Information ===\n");
-    
-    log(LogLevel::Info, "\nMax Distance Case:\n");
-    log(LogLevel::Debug, "  Distance: \n");
-    log(LogLevel::Debug, "  Sample position: (\n");
-    log(LogLevel::Debug, "  Closest position: (\n");
-    log(LogLevel::Debug, "  Sample triangle: \n");
-    log(LogLevel::Debug, "  Closest triangle: \n");
-    
-    if (hasVertexNormals) {
-        log(LogLevel::Info, "\nMax Normal Angle Case:\n");
-        log(LogLevel::Debug, "  Normal angle: \n");
-        log(LogLevel::Debug, "  Distance: \n");
-        log(LogLevel::Debug, "  Sample position: (\n");
-        log(LogLevel::Debug, "  Closest position: (\n");
-        log(LogLevel::Debug, "  Sample triangle: \n");
-        log(LogLevel::Debug, "  Closest triangle: \n");
-        
-        // Get normals at sample point
-        const Triangle& sampleTri = meshA.tris[maxNormalAngleCase.sample.triangleIndex];
-        Vector3 sampleNormal = 
-            meshA.vertexNormals[sampleTri.i0] * maxNormalAngleCase.sample.baryU +
-            meshA.vertexNormals[sampleTri.i1] * maxNormalAngleCase.sample.baryV +
-            meshA.vertexNormals[sampleTri.i2] * maxNormalAngleCase.sample.baryW;
-        sampleNormal = sampleNormal.normalized();
-        
-        const Triangle& closestTri = meshB.tris[maxNormalAngleCase.closestResult.triangleIndex];
-        Vector3 closestNormal = 
-            meshB.vertexNormals[closestTri.i0] * maxNormalAngleCase.closestResult.baryU +
-            meshB.vertexNormals[closestTri.i1] * maxNormalAngleCase.closestResult.baryV +
-            meshB.vertexNormals[closestTri.i2] * maxNormalAngleCase.closestResult.baryW;
-        closestNormal = closestNormal.normalized();
-        
-        log(LogLevel::Debug, "  Sample normal: (\n");
-        log(LogLevel::Debug, "  Closest normal: (\n");
-    }
-    
-    if (hasUVs && maxUVDistanceCase.uvDistance > 0.0) {
-        log(LogLevel::Info, "\nMax UV Distance Case:\n");
-        log(LogLevel::Debug, "  UV distance: \n");
-        log(LogLevel::Debug, "  Position distance: \n");
-        log(LogLevel::Debug, "  Sample position: (\n");
-        log(LogLevel::Debug, "  Closest position: (\n");
-        log(LogLevel::Debug, "  Sample triangle: \n");
-        log(LogLevel::Debug, "  Closest triangle: \n");
-        
-        // Get UVs
-        const Triangle& sampleTri = meshA.tris[maxUVDistanceCase.sample.triangleIndex];
-        const UV& uv0_sample = meshA.uvs[sampleTri.t0];
-        const UV& uv1_sample = meshA.uvs[sampleTri.t1];
-        const UV& uv2_sample = meshA.uvs[sampleTri.t2];
-        
-        double sampleU = uv0_sample.u * maxUVDistanceCase.sample.baryU + 
-                        uv1_sample.u * maxUVDistanceCase.sample.baryV + 
-                        uv2_sample.u * maxUVDistanceCase.sample.baryW;
-        double sampleV = uv0_sample.v * maxUVDistanceCase.sample.baryU + 
-                        uv1_sample.v * maxUVDistanceCase.sample.baryV + 
-                        uv2_sample.v * maxUVDistanceCase.sample.baryW;
-        
-        const Triangle& closestTri = meshB.tris[maxUVDistanceCase.closestResult.triangleIndex];
-        const UV& uv0_closest = meshB.uvs[closestTri.t0];
-        const UV& uv1_closest = meshB.uvs[closestTri.t1];
-        const UV& uv2_closest = meshB.uvs[closestTri.t2];
-        
-        double closestU = uv0_closest.u * maxUVDistanceCase.closestResult.baryU + 
-                         uv1_closest.u * maxUVDistanceCase.closestResult.baryV + 
-                         uv2_closest.u * maxUVDistanceCase.closestResult.baryW;
-        double closestV = uv0_closest.v * maxUVDistanceCase.closestResult.baryU + 
-                         uv1_closest.v * maxUVDistanceCase.closestResult.baryV + 
-                         uv2_closest.v * maxUVDistanceCase.closestResult.baryW;
-        
-        log(LogLevel::Debug, "  Sample UV: (\n");
-        log(LogLevel::Debug, "  Closest UV: (\n");
-        log(LogLevel::Debug, "  Sample triangle UVs:\n");
-        log(LogLevel::Debug, "    v0: (\n");
-        log(LogLevel::Debug, "    v1: (\n");
-        log(LogLevel::Debug, "    v2: (\n");
-        log(LogLevel::Debug, "  Closest triangle UVs:\n");
-        log(LogLevel::Debug, "    v0: (\n");
-        log(LogLevel::Debug, "    v1: (\n");
-        log(LogLevel::Debug, "    v2: (\n");
-        log(LogLevel::Debug, "  Barycentric coords (sample): (\n");
-        log(LogLevel::Debug, "  Barycentric coords (closest): (\n");
-    } else if (hasUVs) {
-        log(LogLevel::Info, "\nMax UV Distance Case: NOT FOUND\n");
-        log(LogLevel::Warning, "  (No valid UV comparisons - one or both meshes lack UVs on compared triangles)\n");
+    if (hasUVs && maxUVDistanceCase.value > 0.0) {
+        log(LogLevel::Info, "\nMax UV Distance: %g\n", maxUVDistanceCase.value);
+        log(LogLevel::Debug, "  Sample position: (%g, %g, %g)\n", 
+            maxUVDistanceCase.samplePosition.x, maxUVDistanceCase.samplePosition.y, maxUVDistanceCase.samplePosition.z);
+        log(LogLevel::Debug, "  Closest position: (%g, %g, %g)\n", 
+            maxUVDistanceCase.closestPosition.x, maxUVDistanceCase.closestPosition.y, maxUVDistanceCase.closestPosition.z);
     }
     
     // Export to OBJ file
@@ -1119,31 +1005,129 @@ void exportDebugVisualization(const std::string& filename,
     
     int vertexOffset = 0;
     
-    // Export reference mesh A
+    // Export reference mesh A with normals and UVs
     out << "# ===== Reference Mesh A =====\n";
     out << "g reference_mesh\n";
     out << "o mesh_a\n";
+    
+    // Write vertices
     for (const Vertex& v : meshA.verts) {
         out << "v " << v.x << " " << v.y << " " << v.z << "\n";
     }
+    
+    // Write vertex normals if available
+    // Skip any invalid (0,0,0) normals and replace with a default
+    if (hasVertexNormals) {
+        for (const Vector3& n : meshA.vertexNormals) {
+            // Check if normal is valid (not zero length)
+            double len = n.length();
+            if (len > 1e-10) {
+                out << "vn " << n.x << " " << n.y << " " << n.z << "\n";
+            } else {
+                // Use a default normal for invalid normals
+                out << "vn 0 0 1\n";
+            }
+        }
+    }
+    
+    // Write UVs if available
+    if (hasUVs) {
+        for (size_t i = 1; i < meshA.uvs.size(); i++) {  // Skip index 0 (default UV)
+            const UV& uv = meshA.uvs[i];
+            out << "vt " << uv.u << " " << uv.v << "\n";
+        }
+    }
+    
+    // Write faces with appropriate format
     int meshAVertCount = static_cast<int>(meshA.verts.size());
     for (const Triangle& tri : meshA.tris) {
-        out << "f " << (tri.i0 + 1) << " " << (tri.i1 + 1) << " " << (tri.i2 + 1) << "\n";
+        out << "f";
+        if (hasUVs && hasVertexNormals) {
+            // v/vt/vn format
+            out << " " << (tri.i0 + 1) << "/" << tri.t0 << "/" << (tri.i0 + 1);
+            out << " " << (tri.i1 + 1) << "/" << tri.t1 << "/" << (tri.i1 + 1);
+            out << " " << (tri.i2 + 1) << "/" << tri.t2 << "/" << (tri.i2 + 1);
+        } else if (hasVertexNormals) {
+            // v//vn format
+            out << " " << (tri.i0 + 1) << "//" << (tri.i0 + 1);
+            out << " " << (tri.i1 + 1) << "//" << (tri.i1 + 1);
+            out << " " << (tri.i2 + 1) << "//" << (tri.i2 + 1);
+        } else if (hasUVs) {
+            // v/vt format
+            out << " " << (tri.i0 + 1) << "/" << tri.t0;
+            out << " " << (tri.i1 + 1) << "/" << tri.t1;
+            out << " " << (tri.i2 + 1) << "/" << tri.t2;
+        } else {
+            // v format
+            out << " " << (tri.i0 + 1);
+            out << " " << (tri.i1 + 1);
+            out << " " << (tri.i2 + 1);
+        }
+        out << "\n";
     }
     vertexOffset = meshAVertCount;
+    int normalOffset = hasVertexNormals ? static_cast<int>(meshA.vertexNormals.size()) : 0;
+    int uvOffset = hasUVs ? static_cast<int>(meshA.uvs.size() - 1) : 0;
     
-    // Export test mesh B
+    // Export test mesh B with normals and UVs
     out << "\n# ===== Test Mesh B =====\n";
     out << "g test_mesh\n";
     out << "o mesh_b\n";
+    
+    // Write vertices
     for (const Vertex& v : meshB.verts) {
         out << "v " << v.x << " " << v.y << " " << v.z << "\n";
     }
+    
+    // Write vertex normals if available
+    // Skip any invalid (0,0,0) normals and replace with a default
+    if (hasVertexNormals) {
+        for (const Vector3& n : meshB.vertexNormals) {
+            // Check if normal is valid (not zero length)
+            double len = n.length();
+            if (len > 1e-10) {
+                out << "vn " << n.x << " " << n.y << " " << n.z << "\n";
+            } else {
+                // Use a default normal for invalid normals
+                out << "vn 0 0 1\n";
+            }
+        }
+    }
+    
+    // Write UVs if available
+    if (hasUVs) {
+        for (size_t i = 1; i < meshB.uvs.size(); i++) {  // Skip index 0 (default UV)
+            const UV& uv = meshB.uvs[i];
+            out << "vt " << uv.u << " " << uv.v << "\n";
+        }
+    }
+    
+    // Write faces with appropriate format
     int meshBVertCount = static_cast<int>(meshB.verts.size());
     for (const Triangle& tri : meshB.tris) {
-        out << "f " << (tri.i0 + 1 + vertexOffset) << " " 
-            << (tri.i1 + 1 + vertexOffset) << " " 
-            << (tri.i2 + 1 + vertexOffset) << "\n";
+        out << "f";
+        if (hasUVs && hasVertexNormals) {
+            // v/vt/vn format
+            out << " " << (tri.i0 + 1 + vertexOffset) << "/" << (tri.t0 > 0 ? tri.t0 + uvOffset : 0) << "/" << (tri.i0 + 1 + normalOffset);
+            out << " " << (tri.i1 + 1 + vertexOffset) << "/" << (tri.t1 > 0 ? tri.t1 + uvOffset : 0) << "/" << (tri.i1 + 1 + normalOffset);
+            out << " " << (tri.i2 + 1 + vertexOffset) << "/" << (tri.t2 > 0 ? tri.t2 + uvOffset : 0) << "/" << (tri.i2 + 1 + normalOffset);
+        } else if (hasVertexNormals) {
+            // v//vn format
+            out << " " << (tri.i0 + 1 + vertexOffset) << "//" << (tri.i0 + 1 + normalOffset);
+            out << " " << (tri.i1 + 1 + vertexOffset) << "//" << (tri.i1 + 1 + normalOffset);
+            out << " " << (tri.i2 + 1 + vertexOffset) << "//" << (tri.i2 + 1 + normalOffset);
+        } else if (hasUVs) {
+            // v/vt format
+            out << " " << (tri.i0 + 1 + vertexOffset) << "/" << (tri.t0 > 0 ? tri.t0 + uvOffset : 0);
+            out << " " << (tri.i1 + 1 + vertexOffset) << "/" << (tri.t1 > 0 ? tri.t1 + uvOffset : 0);
+            out << " " << (tri.i2 + 1 + vertexOffset) << "/" << (tri.t2 > 0 ? tri.t2 + uvOffset : 0);
+        } else {
+            // v format
+            out << " " << (tri.i0 + 1 + vertexOffset);
+            out << " " << (tri.i1 + 1 + vertexOffset);
+            out << " " << (tri.i2 + 1 + vertexOffset);
+        }
+        out << "\n";
     }
     vertexOffset += meshBVertCount;
     
@@ -1167,63 +1151,51 @@ void exportDebugVisualization(const std::string& filename,
     out << "\n# ===== Max Distance Deviation =====\n";
     out << "# Sample point (larger sphere)\n";
     out << "g max_distance_sample\n";
-    generateSphere(out, maxDistanceCase.sample.position, baseSphereRadius * 3.0, vertexOffset, "max_distance_sample");
+    generateSphere(out, maxDistanceCase.samplePosition, baseSphereRadius * 3.0, vertexOffset, "max_distance_sample");
     
     out << "# Closest surface point (smaller sphere)\n";
     out << "g max_distance_surface\n";
-    generateSphere(out, maxDistanceCase.closestResult.point, baseSphereRadius, vertexOffset, "max_distance_surface");
+    generateSphere(out, maxDistanceCase.closestPosition, baseSphereRadius, vertexOffset, "max_distance_surface");
     
-    if (hasVertexNormals) {
+    if (hasVertexNormals && maxNormalAngleCase.value > 0.0) {
         out << "\n# ===== Max Normal Angle Deviation =====\n";
         out << "# Sample point (larger sphere)\n";
         out << "g max_normal_sample\n";
-        generateSphere(out, maxNormalAngleCase.sample.position, baseSphereRadius * 3.0, vertexOffset, "max_normal_sample");
+        generateSphere(out, maxNormalAngleCase.samplePosition, baseSphereRadius * 3.0, vertexOffset, "max_normal_sample");
         
         out << "# Closest surface point (smaller sphere)\n";
         out << "g max_normal_surface\n";
-        generateSphere(out, maxNormalAngleCase.closestResult.point, baseSphereRadius, vertexOffset, "max_normal_surface");
+        generateSphere(out, maxNormalAngleCase.closestPosition, baseSphereRadius, vertexOffset, "max_normal_surface");
     }
     
-    if (hasUVs && maxUVDistanceCase.uvDistance > 0.0) {
+    if (hasUVs && maxUVDistanceCase.value > 0.0) {
         out << "\n# ===== Max UV Distance Deviation =====\n";
         out << "# Sample point (larger sphere)\n";
         out << "g max_uv_sample\n";
-        generateSphere(out, maxUVDistanceCase.sample.position, baseSphereRadius * 3.0, vertexOffset, "max_uv_sample");
+        generateSphere(out, maxUVDistanceCase.samplePosition, baseSphereRadius * 3.0, vertexOffset, "max_uv_sample");
         
         out << "# Closest surface point (smaller sphere)\n";
         out << "g max_uv_surface\n";
-        generateSphere(out, maxUVDistanceCase.closestResult.point, baseSphereRadius, vertexOffset, "max_uv_surface");
+        generateSphere(out, maxUVDistanceCase.closestPosition, baseSphereRadius, vertexOffset, "max_uv_surface");
     } else if (hasUVs) {
         out << "\n# No valid UV comparisons found (meshes may lack UV data on compared triangles)\n";
     }
     
     out.close();
     
-    log(LogLevel::Info, "\nDebug visualization exported to: \n");
-    log(LogLevel::Info, "\nObjects in file:\n");
-    log(LogLevel::Info, "  Groups (can be toggled in 3D viewer):\n");
-    log(LogLevel::Info, "    - reference_mesh (mesh_a)\n");
-    log(LogLevel::Info, "    - test_mesh (mesh_b)\n");
-    log(LogLevel::Info, "    - max_distance_sample (LARGE sphere = sample point on A)\n");
-    log(LogLevel::Info, "    - max_distance_surface (small sphere = closest point on B)\n");
-    if (hasVertexNormals) {
-        log(LogLevel::Info, "    - max_normal_sample (LARGE sphere = sample point on A)\n");
-        log(LogLevel::Info, "    - max_normal_surface (small sphere = closest point on B)\n");
+    log(LogLevel::Info, "\nDebug visualization exported to: %s\n", filename.c_str());
+    log(LogLevel::Info, "\nExported content:\n");
+    log(LogLevel::Info, "  - Reference mesh (A) with normals and UVs\n");
+    log(LogLevel::Info, "  - Test mesh (B) with normals and UVs\n");
+    log(LogLevel::Info, "  - Max distance deviation markers (%.4g)\n", maxDistanceCase.value);
+    if (hasVertexNormals && maxNormalAngleCase.value > 0.0) {
+        log(LogLevel::Info, "  - Max normal angle deviation markers (%.2f degrees)\n", maxNormalAngleCase.value);
     }
-    if (hasUVs && maxUVDistanceCase.uvDistance > 0.0) {
-        log(LogLevel::Info, "    - max_uv_sample (LARGE sphere = sample point on A)\n");
-        log(LogLevel::Info, "    - max_uv_surface (small sphere = closest point on B)\n");
-    } else if (hasUVs) {
-        log(LogLevel::Info, "    - [UV spheres NOT created - no valid UV comparisons found]\n");
+    if (hasUVs && maxUVDistanceCase.value > 0.0) {
+        log(LogLevel::Info, "  - Max UV distance deviation markers (%.4g)\n", maxUVDistanceCase.value);
     }
-    log(LogLevel::Info, "\n  Sphere sizes:\n");
-    log(LogLevel::Info, "    - Sample sphere (LARGE = 3x base): \n");
-    log(LogLevel::Info, "    - Surface sphere (small = 1x base): \n");
-    log(LogLevel::Info, "    - Base radius (0.5% of bbox diagonal): \n");
-    log(LogLevel::Info, "\n  IMPORTANT:\n");
-    log(LogLevel::Info, "    - This shows Direction 1 (A->B): samples from '\n");
-    log(LogLevel::Info, "    - To detect features in mesh B (spikes/protrusions), swap inputs:\n");
-    log(LogLevel::Info, "      mesh_compare <mesh_with_spike> <reference> ... --debug out.obj\n");
+    log(LogLevel::Info, "\nVisualization shows Direction A->B extreme cases\n");
+    log(LogLevel::Info, "Large spheres = sample points on A, small spheres = closest points on B\n");
 }
 
 } // namespace MeshGeometricDeviation

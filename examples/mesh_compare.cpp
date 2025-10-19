@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
     
     // Export debug visualization if requested
     if (exportDebug) {
-        exportDebugVisualization(debugOutputFile, meshA, meshB, numSamplesA, numSamplesB, maxAngleDegrees, seed);
+        exportDebugVisualization(debugOutputFile, meshA, meshB, biStats);
     }
     
     std::cout << "\n=== Comparison Complete ===" << std::endl;
