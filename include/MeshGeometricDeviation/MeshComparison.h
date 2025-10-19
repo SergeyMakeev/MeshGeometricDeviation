@@ -152,5 +152,8 @@ void exportDebugVisualization(const std::string& filename,
                               const Mesh& meshA, const Mesh& meshB,
                               const BidirectionalDevianceStats& biStats);
 
+// Export a single mesh to OBJ file (for debugging/testing)
+bool exportMeshToObj(const std::string& filename, const Mesh& mesh);
+
 } // namespace MeshGeometricDeviation
 

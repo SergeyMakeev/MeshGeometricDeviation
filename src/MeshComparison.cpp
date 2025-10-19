@@ -212,13 +212,7 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
     
     // Reserve space
     mesh.verts.reserve(obj->position_count);
-    mesh.uvs.reserve(obj->texcoord_count + 1);  // +1 for index 0 (no UV)
-    
-    // Add a default UV at index 0 for faces without UVs
-    UV defaultUV;
-    defaultUV.u = 0.0f;
-    defaultUV.v = 0.0f;
-    mesh.uvs.push_back(defaultUV);
+    mesh.uvs.reserve(obj->texcoord_count);
     
     // Load vertices
     for (unsigned int i = 0; i < obj->position_count; i++) {
@@ -230,12 +224,16 @@ bool loadObjFile(const std::string& filename, Mesh& mesh) {
     }
     
     // Load texture coordinates
+    // Note: fast_obj already adds a dummy UV at index 0, so texcoord_count includes it
+    // We load all UVs including the dummy, so face indices work correctly
+    log(LogLevel::Debug, "  Loading %u texture coordinates from OBJ file (includes fast_obj dummy at index 0)\n", obj->texcoord_count);
     for (unsigned int i = 0; i < obj->texcoord_count; i++) {
         UV uv;
         uv.u = obj->texcoords[2 * i + 0];
         uv.v = obj->texcoords[2 * i + 1];
         mesh.uvs.push_back(uv);
     }
+    log(LogLevel::Debug, "  Total UVs in mesh.uvs: %zu (including fast_obj dummy at index 0)\n", mesh.uvs.size());
     
     // Load normals from OBJ file if available
     // OBJ normals are per-corner (indexed), we need to convert to per-vertex
@@ -907,6 +905,98 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats) {
     }
 }
 
+// Export a single mesh to OBJ file (for debugging/testing)
+bool exportMeshToObj(const std::string& filename, const Mesh& mesh) {
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        log(LogLevel::Error, "Failed to open output file: %s\n", filename.c_str());
+        return false;
+    }
+    
+    log(LogLevel::Info, "Exporting mesh to OBJ file: %s\n", filename.c_str());
+    
+    out << "# Exported mesh from MeshGeometricDeviation\n";
+    out << "# Mesh name: " << mesh.name << "\n";
+    out << "# Vertices: " << mesh.verts.size() << "\n";
+    out << "# Triangles: " << mesh.tris.size() << "\n";
+    out << "# UVs: " << (mesh.uvs.size() > 1 ? mesh.uvs.size() - 1 : 0) << " (excluding default)\n";
+    out << "# Vertex normals: " << mesh.vertexNormals.size() << "\n\n";
+    
+    out << "g exported_mesh\n";
+    out << "o mesh\n";
+    
+    // Write vertices (skip index 0 - the fast_obj dummy vertex)
+    // fast_obj adds a dummy at index 0, so we start from index 1
+    for (size_t i = 1; i < mesh.verts.size(); i++) {
+        const Vertex& v = mesh.verts[i];
+        out << "v " << v.x << " " << v.y << " " << v.z << "\n";
+    }
+    
+    // Write texture coordinates (skip index 0 - the fast_obj dummy UV)
+    bool hasUVs = mesh.uvs.size() > 1;
+    if (hasUVs) {
+        for (size_t i = 1; i < mesh.uvs.size(); i++) {
+            const UV& uv = mesh.uvs[i];
+            out << "vt " << uv.u << " " << uv.v << "\n";
+        }
+    }
+    
+    // Write vertex normals if available (skip index 0 - the fast_obj dummy normal)
+    bool hasNormals = mesh.vertexNormals.size() > 1;
+    if (hasNormals) {
+        for (size_t i = 1; i < mesh.vertexNormals.size(); i++) {
+            const Vector3& n = mesh.vertexNormals[i];
+            double len = n.length();
+            if (len > 1e-10) {
+                out << "vn " << n.x << " " << n.y << " " << n.z << "\n";
+            } else {
+                out << "vn 0 0 1\n";  // Default normal for invalid normals
+            }
+        }
+    }
+    
+    // Write faces
+    // Note: tri.i0, tri.i1, tri.i2 are already 1-based indices from the OBJ file
+    // Since we skip the dummy entries when writing vertices/normals/UVs,
+    // we use the indices directly (they already match the correct 1-based OBJ indices)
+    for (const Triangle& tri : mesh.tris) {
+        out << "f";
+        
+        if (hasUVs && hasNormals) {
+            // v/vt/vn format
+            out << " " << tri.i0 << "/" << tri.t0 << "/" << tri.i0;
+            out << " " << tri.i1 << "/" << tri.t1 << "/" << tri.i1;
+            out << " " << tri.i2 << "/" << tri.t2 << "/" << tri.i2;
+        } else if (hasNormals) {
+            // v//vn format
+            out << " " << tri.i0 << "//" << tri.i0;
+            out << " " << tri.i1 << "//" << tri.i1;
+            out << " " << tri.i2 << "//" << tri.i2;
+        } else if (hasUVs) {
+            // v/vt format
+            out << " " << tri.i0 << "/" << tri.t0;
+            out << " " << tri.i1 << "/" << tri.t1;
+            out << " " << tri.i2 << "/" << tri.t2;
+        } else {
+            // v format only
+            out << " " << tri.i0;
+            out << " " << tri.i1;
+            out << " " << tri.i2;
+        }
+        out << "\n";
+    }
+    
+    out.close();
+    
+    log(LogLevel::Info, "Successfully exported mesh to: %s\n", filename.c_str());
+    log(LogLevel::Info, "  Vertices: %zu (excluding fast_obj dummy at index 0)\n", mesh.verts.size() > 0 ? mesh.verts.size() - 1 : 0);
+    log(LogLevel::Info, "  UVs: %zu (excluding fast_obj dummy at index 0)\n", hasUVs ? mesh.uvs.size() - 1 : 0);
+    log(LogLevel::Info, "  Normals: %zu (excluding fast_obj dummy at index 0)\n", hasNormals ? mesh.vertexNormals.size() - 1 : 0);
+    log(LogLevel::Info, "  Triangles: %zu\n", mesh.tris.size());
+    
+    return true;
+}
+
 // Helper function to generate a sphere mesh
 static void generateSphere(std::ofstream& out, const Vector3& center, double radius, int& vertexOffset, const std::string& objName) {
     const int segments = 8;  // Low-poly sphere for visibility
@@ -1010,63 +1100,63 @@ void exportDebugVisualization(const std::string& filename,
     out << "g reference_mesh\n";
     out << "o mesh_a\n";
     
-    // Write vertices
-    for (const Vertex& v : meshA.verts) {
+    // Write vertices (skip index 0 - fast_obj dummy)
+    for (size_t i = 1; i < meshA.verts.size(); i++) {
+        const Vertex& v = meshA.verts[i];
         out << "v " << v.x << " " << v.y << " " << v.z << "\n";
     }
     
-    // Write vertex normals if available
-    // Skip any invalid (0,0,0) normals and replace with a default
+    // Write vertex normals if available (skip index 0 - fast_obj dummy)
     if (hasVertexNormals) {
-        for (const Vector3& n : meshA.vertexNormals) {
-            // Check if normal is valid (not zero length)
+        for (size_t i = 1; i < meshA.vertexNormals.size(); i++) {
+            const Vector3& n = meshA.vertexNormals[i];
             double len = n.length();
             if (len > 1e-10) {
                 out << "vn " << n.x << " " << n.y << " " << n.z << "\n";
             } else {
-                // Use a default normal for invalid normals
-                out << "vn 0 0 1\n";
+                out << "vn 0 0 1\n";  // Default normal for invalid normals
             }
         }
     }
     
-    // Write UVs if available
+    // Write UVs if available (skip index 0 - fast_obj dummy)
     if (hasUVs) {
-        for (size_t i = 1; i < meshA.uvs.size(); i++) {  // Skip index 0 (default UV)
+        for (size_t i = 1; i < meshA.uvs.size(); i++) {
             const UV& uv = meshA.uvs[i];
             out << "vt " << uv.u << " " << uv.v << "\n";
         }
     }
     
     // Write faces with appropriate format
-    int meshAVertCount = static_cast<int>(meshA.verts.size());
+    // Face indices are already 1-based from OBJ file, use them directly
+    int meshAVertCount = static_cast<int>(meshA.verts.size() - 1);  // Excluding dummy
     for (const Triangle& tri : meshA.tris) {
         out << "f";
         if (hasUVs && hasVertexNormals) {
             // v/vt/vn format
-            out << " " << (tri.i0 + 1) << "/" << tri.t0 << "/" << (tri.i0 + 1);
-            out << " " << (tri.i1 + 1) << "/" << tri.t1 << "/" << (tri.i1 + 1);
-            out << " " << (tri.i2 + 1) << "/" << tri.t2 << "/" << (tri.i2 + 1);
+            out << " " << tri.i0 << "/" << tri.t0 << "/" << tri.i0;
+            out << " " << tri.i1 << "/" << tri.t1 << "/" << tri.i1;
+            out << " " << tri.i2 << "/" << tri.t2 << "/" << tri.i2;
         } else if (hasVertexNormals) {
             // v//vn format
-            out << " " << (tri.i0 + 1) << "//" << (tri.i0 + 1);
-            out << " " << (tri.i1 + 1) << "//" << (tri.i1 + 1);
-            out << " " << (tri.i2 + 1) << "//" << (tri.i2 + 1);
+            out << " " << tri.i0 << "//" << tri.i0;
+            out << " " << tri.i1 << "//" << tri.i1;
+            out << " " << tri.i2 << "//" << tri.i2;
         } else if (hasUVs) {
             // v/vt format
-            out << " " << (tri.i0 + 1) << "/" << tri.t0;
-            out << " " << (tri.i1 + 1) << "/" << tri.t1;
-            out << " " << (tri.i2 + 1) << "/" << tri.t2;
+            out << " " << tri.i0 << "/" << tri.t0;
+            out << " " << tri.i1 << "/" << tri.t1;
+            out << " " << tri.i2 << "/" << tri.t2;
         } else {
             // v format
-            out << " " << (tri.i0 + 1);
-            out << " " << (tri.i1 + 1);
-            out << " " << (tri.i2 + 1);
+            out << " " << tri.i0;
+            out << " " << tri.i1;
+            out << " " << tri.i2;
         }
         out << "\n";
     }
     vertexOffset = meshAVertCount;
-    int normalOffset = hasVertexNormals ? static_cast<int>(meshA.vertexNormals.size()) : 0;
+    int normalOffset = hasVertexNormals ? static_cast<int>(meshA.vertexNormals.size() - 1) : 0;
     int uvOffset = hasUVs ? static_cast<int>(meshA.uvs.size() - 1) : 0;
     
     // Export test mesh B with normals and UVs
@@ -1074,58 +1164,58 @@ void exportDebugVisualization(const std::string& filename,
     out << "g test_mesh\n";
     out << "o mesh_b\n";
     
-    // Write vertices
-    for (const Vertex& v : meshB.verts) {
+    // Write vertices (skip index 0 - fast_obj dummy)
+    for (size_t i = 1; i < meshB.verts.size(); i++) {
+        const Vertex& v = meshB.verts[i];
         out << "v " << v.x << " " << v.y << " " << v.z << "\n";
     }
     
-    // Write vertex normals if available
-    // Skip any invalid (0,0,0) normals and replace with a default
+    // Write vertex normals if available (skip index 0 - fast_obj dummy)
     if (hasVertexNormals) {
-        for (const Vector3& n : meshB.vertexNormals) {
-            // Check if normal is valid (not zero length)
+        for (size_t i = 1; i < meshB.vertexNormals.size(); i++) {
+            const Vector3& n = meshB.vertexNormals[i];
             double len = n.length();
             if (len > 1e-10) {
                 out << "vn " << n.x << " " << n.y << " " << n.z << "\n";
             } else {
-                // Use a default normal for invalid normals
-                out << "vn 0 0 1\n";
+                out << "vn 0 0 1\n";  // Default normal for invalid normals
             }
         }
     }
     
-    // Write UVs if available
+    // Write UVs if available (skip index 0 - fast_obj dummy)
     if (hasUVs) {
-        for (size_t i = 1; i < meshB.uvs.size(); i++) {  // Skip index 0 (default UV)
+        for (size_t i = 1; i < meshB.uvs.size(); i++) {
             const UV& uv = meshB.uvs[i];
             out << "vt " << uv.u << " " << uv.v << "\n";
         }
     }
     
     // Write faces with appropriate format
-    int meshBVertCount = static_cast<int>(meshB.verts.size());
+    // tri.i0 etc. are 1-based, add offsets to reference correct indices in combined file
+    int meshBVertCount = static_cast<int>(meshB.verts.size() - 1);  // Excluding dummy
     for (const Triangle& tri : meshB.tris) {
         out << "f";
         if (hasUVs && hasVertexNormals) {
             // v/vt/vn format
-            out << " " << (tri.i0 + 1 + vertexOffset) << "/" << (tri.t0 > 0 ? tri.t0 + uvOffset : 0) << "/" << (tri.i0 + 1 + normalOffset);
-            out << " " << (tri.i1 + 1 + vertexOffset) << "/" << (tri.t1 > 0 ? tri.t1 + uvOffset : 0) << "/" << (tri.i1 + 1 + normalOffset);
-            out << " " << (tri.i2 + 1 + vertexOffset) << "/" << (tri.t2 > 0 ? tri.t2 + uvOffset : 0) << "/" << (tri.i2 + 1 + normalOffset);
+            out << " " << (tri.i0 + vertexOffset) << "/" << (tri.t0 + uvOffset) << "/" << (tri.i0 + normalOffset);
+            out << " " << (tri.i1 + vertexOffset) << "/" << (tri.t1 + uvOffset) << "/" << (tri.i1 + normalOffset);
+            out << " " << (tri.i2 + vertexOffset) << "/" << (tri.t2 + uvOffset) << "/" << (tri.i2 + normalOffset);
         } else if (hasVertexNormals) {
             // v//vn format
-            out << " " << (tri.i0 + 1 + vertexOffset) << "//" << (tri.i0 + 1 + normalOffset);
-            out << " " << (tri.i1 + 1 + vertexOffset) << "//" << (tri.i1 + 1 + normalOffset);
-            out << " " << (tri.i2 + 1 + vertexOffset) << "//" << (tri.i2 + 1 + normalOffset);
+            out << " " << (tri.i0 + vertexOffset) << "//" << (tri.i0 + normalOffset);
+            out << " " << (tri.i1 + vertexOffset) << "//" << (tri.i1 + normalOffset);
+            out << " " << (tri.i2 + vertexOffset) << "//" << (tri.i2 + normalOffset);
         } else if (hasUVs) {
             // v/vt format
-            out << " " << (tri.i0 + 1 + vertexOffset) << "/" << (tri.t0 > 0 ? tri.t0 + uvOffset : 0);
-            out << " " << (tri.i1 + 1 + vertexOffset) << "/" << (tri.t1 > 0 ? tri.t1 + uvOffset : 0);
-            out << " " << (tri.i2 + 1 + vertexOffset) << "/" << (tri.t2 > 0 ? tri.t2 + uvOffset : 0);
+            out << " " << (tri.i0 + vertexOffset) << "/" << (tri.t0 + uvOffset);
+            out << " " << (tri.i1 + vertexOffset) << "/" << (tri.t1 + uvOffset);
+            out << " " << (tri.i2 + vertexOffset) << "/" << (tri.t2 + uvOffset);
         } else {
             // v format
-            out << " " << (tri.i0 + 1 + vertexOffset);
-            out << " " << (tri.i1 + 1 + vertexOffset);
-            out << " " << (tri.i2 + 1 + vertexOffset);
+            out << " " << (tri.i0 + vertexOffset);
+            out << " " << (tri.i1 + vertexOffset);
+            out << " " << (tri.i2 + vertexOffset);
         }
         out << "\n";
     }
