@@ -510,23 +510,27 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
             maxDistanceCase.value = distance;
         }
         
+        // Look up triangles once and reuse for both normal and UV variance calculations
+        const Triangle* sampleTri = nullptr;
+        const Triangle* closestTri = nullptr;
+        if (hasVertexNormals || hasUVs) {
+            sampleTri = &meshA.tris[sample.triangleIndex];
+            closestTri = &meshB.tris[result.triangleIndex];
+        }
+        
         // Compute normal variance if both meshes have vertex normals
-        // Cache triangle lookups to improve performance
         if (hasVertexNormals) {
-            const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
-            const Triangle& closestTri = meshB.tris[result.triangleIndex];
-            
             // Interpolate normals using barycentric coordinates
             Vector3 sampleVertexNormal = 
-                meshA.vertexNormals[sampleTri.i0] * sample.baryU +
-                meshA.vertexNormals[sampleTri.i1] * sample.baryV +
-                meshA.vertexNormals[sampleTri.i2] * sample.baryW;
+                meshA.vertexNormals[sampleTri->i0] * sample.baryU +
+                meshA.vertexNormals[sampleTri->i1] * sample.baryV +
+                meshA.vertexNormals[sampleTri->i2] * sample.baryW;
             sampleVertexNormal = sampleVertexNormal.normalized();
             
             Vector3 closestVertexNormal = 
-                meshB.vertexNormals[closestTri.i0] * result.baryU +
-                meshB.vertexNormals[closestTri.i1] * result.baryV +
-                meshB.vertexNormals[closestTri.i2] * result.baryW;
+                meshB.vertexNormals[closestTri->i0] * result.baryU +
+                meshB.vertexNormals[closestTri->i1] * result.baryV +
+                meshB.vertexNormals[closestTri->i2] * result.baryW;
             closestVertexNormal = closestVertexNormal.normalized();
             
             // Compute angle between normals (optimized)
@@ -553,26 +557,23 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         }
         
         // Compute UV variance if both meshes have UVs
-        // Use cached triangle references from normal variance if available
+        // Reuse cached triangle pointers
         if (hasUVs) {
-            const Triangle& sampleTri = meshA.tris[sample.triangleIndex];
-            const Triangle& closestTri = meshB.tris[result.triangleIndex];
-            
             // Check if both triangles have valid UV indices
-            if (sampleTri.t0 > 0 && sampleTri.t1 > 0 && sampleTri.t2 > 0 &&
-                closestTri.t0 > 0 && closestTri.t1 > 0 && closestTri.t2 > 0) {
+            if (sampleTri->t0 > 0 && sampleTri->t1 > 0 && sampleTri->t2 > 0 &&
+                closestTri->t0 > 0 && closestTri->t1 > 0 && closestTri->t2 > 0) {
                 
                 // Interpolate UVs directly (optimized)
-                const UV& uv0_s = meshA.uvs[sampleTri.t0];
-                const UV& uv1_s = meshA.uvs[sampleTri.t1];
-                const UV& uv2_s = meshA.uvs[sampleTri.t2];
+                const UV& uv0_s = meshA.uvs[sampleTri->t0];
+                const UV& uv1_s = meshA.uvs[sampleTri->t1];
+                const UV& uv2_s = meshA.uvs[sampleTri->t2];
                 
                 double sampleU = uv0_s.u * sample.baryU + uv1_s.u * sample.baryV + uv2_s.u * sample.baryW;
                 double sampleV = uv0_s.v * sample.baryU + uv1_s.v * sample.baryV + uv2_s.v * sample.baryW;
                 
-                const UV& uv0_c = meshB.uvs[closestTri.t0];
-                const UV& uv1_c = meshB.uvs[closestTri.t1];
-                const UV& uv2_c = meshB.uvs[closestTri.t2];
+                const UV& uv0_c = meshB.uvs[closestTri->t0];
+                const UV& uv1_c = meshB.uvs[closestTri->t1];
+                const UV& uv2_c = meshB.uvs[closestTri->t2];
                 
                 double closestU = uv0_c.u * result.baryU + uv1_c.u * result.baryV + uv2_c.u * result.baryW;
                 double closestV = uv0_c.v * result.baryU + uv1_c.v * result.baryV + uv2_c.v * result.baryW;
