@@ -142,8 +142,8 @@ private:
     const Mesh* meshPtr;
     std::vector<TriangleData> allTriangles;
 
-    static constexpr int MAX_TRIANGLES_PER_LEAF = 12;  // Balanced for cache vs search cost
-    static constexpr int MAX_DEPTH = 12;  // Moderate depth for good performance
+    static constexpr int MAX_TRIANGLES_PER_LEAF = 4;  // Balanced for cache vs search cost
+    static constexpr int MAX_DEPTH = 16;  // Moderate depth for good performance
 
     KdNode* buildTree(std::vector<TriangleData>& triangles, int depth);
     Vector3 closestPointOnTriangle(const Vector3& p, const TriangleData& tri, double& distSq) const;
