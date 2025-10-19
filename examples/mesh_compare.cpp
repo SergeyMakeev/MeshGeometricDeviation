@@ -44,6 +44,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "                         Note: Actual sample count is auto-computed based on mesh surface area" << std::endl;
         std::cerr << "                         Each triangle is guaranteed at least one sample point" << std::endl;
         std::cerr << "  max_angle_degrees    - Max angle for normal matching in degrees (default: 180.0)" << std::endl;
+        std::cerr << "                         180.0 effectively disables normal filtering (accepts any orientation)" << std::endl;
+        std::cerr << "                         Use smaller values (e.g., 45.0) for stricter normal matching" << std::endl;
         std::cerr << "  seed                 - Random seed for reproducible results (default: 42)" << std::endl;
         std::cerr << "  --debug output.obj   - Export debug visualization with extreme deviation points" << std::endl;
         std::cerr << "\nTest Mode:" << std::endl;

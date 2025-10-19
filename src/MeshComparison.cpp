@@ -390,7 +390,22 @@ int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea) {
     return numSamples;
 }
 
-// Compare two meshes
+/**
+ * Compare two meshes unidirectionally
+ * 
+ * Samples points on meshA and finds their closest points on meshB.
+ * Measures geometric distance, normal variance (if vertex normals present), 
+ * and UV variance (if UVs present).
+ * 
+ * @param meshA Reference mesh to sample from
+ * @param meshB Target mesh to find closest points on
+ * @param numSamples Number of points to sample on meshA
+ * @param maxAngleDegrees Maximum angle in degrees for normal-aware queries (default: 180.0, disabled)
+ * @param useAreaWeighting If true, distributes samples by triangle area (default: true)
+ * @param useNormalFiltering If true, prefers triangles with similar normals (default: true)
+ * @param seed Random seed for reproducible sampling (default: 42)
+ * @return DevianceStats containing distance, normal, and UV statistics
+ */
 DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples, 
                             double maxAngleDegrees, bool useAreaWeighting, 
                             bool useNormalFiltering, unsigned int seed) {
@@ -510,7 +525,8 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
             maxDistanceCase.value = distance;
         }
         
-        // Look up triangles once and reuse for both normal and UV variance calculations
+        // Cache triangle lookups to avoid redundant memory accesses
+        // These pointers are reused for both normal and UV variance calculations
         const Triangle* sampleTri = nullptr;
         const Triangle* closestTri = nullptr;
         if (hasVertexNormals || hasUVs) {
@@ -720,7 +736,23 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     return devianceStats;
 }
 
-// Bidirectional mesh comparison
+/**
+ * Compare two meshes bidirectionally
+ * 
+ * Performs comparison in both directions: A->B and B->A.
+ * This detects both missing geometry (holes) and extra geometry.
+ * Computes asymmetry metrics and combined statistics.
+ * 
+ * @param meshA Reference mesh
+ * @param meshB Test mesh
+ * @param numSamplesA Number of samples to take on meshA
+ * @param numSamplesB Number of samples to take on meshB
+ * @param maxAngleDegrees Maximum angle in degrees for normal-aware queries (default: 45.0)
+ * @param useAreaWeighting If true, distributes samples by triangle area (default: true)
+ * @param useNormalFiltering If true, prefers triangles with similar normals (default: true)
+ * @param baseSeed Base random seed (uses baseSeed for A->B, baseSeed+1 for B->A) (default: 42)
+ * @return BidirectionalDevianceStats with results for both directions and combined metrics
+ */
 BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const Mesh& meshB, 
                                                        int numSamplesA, int numSamplesB,
                                                        double maxAngleDegrees,

@@ -108,23 +108,27 @@ mesh_compare <reference.obj> <test.obj> [sample_density] [max_angle] [seed]
 - `reference.obj` - Reference mesh (MeshA)
 - `test.obj` - Test mesh to compare (MeshB)
 - `sample_density` - Samples per square unit (default: 20.0)
-- `max_angle` - Max angle for normal matching in degrees (default: 45.0)
+- `max_angle` - Max angle for normal matching in degrees (default: 180.0)
+  - 180.0 effectively disables normal filtering (accepts any orientation)
+  - Use smaller values (e.g., 45.0) for stricter normal matching
 - `seed` - Random seed for reproducibility (default: 42)
+
+**Note:** The CLI tool defaults to `max_angle=180.0` (no normal filtering) for maximum compatibility. The library API function `compareMeshesBidirectional` defaults to `45.0` for stricter matching. Choose based on your needs.
 
 ### Examples
 
 ```bash
-# Compare with default settings (20 samples/unit^2, 45 deg angle, seed 42)
+# Compare with default settings (20 samples/unit^2, 180 deg angle, seed 42)
 mesh_compare original.obj modified.obj
 
 # Higher sample density for more accuracy
 mesh_compare original.obj modified.obj 100
 
-# Custom angle threshold
-mesh_compare original.obj modified.obj 20 30.0
+# Custom angle threshold for stricter normal matching
+mesh_compare original.obj modified.obj 20 45.0
 
 # Custom seed for different sampling pattern
-mesh_compare original.obj modified.obj 20 45.0 123
+mesh_compare original.obj modified.obj 20 180.0 123
 
 # Low density (still guarantees one sample per triangle)
 mesh_compare original.obj modified.obj 1.0
