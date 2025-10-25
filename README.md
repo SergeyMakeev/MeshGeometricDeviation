@@ -8,6 +8,7 @@ A high-performance C++ library for computing geometric deviations between 3D tri
 
 ### Core Library Features
 - **Bidirectional Mesh Comparison** - Detects both missing and extra geometry
+- **Outer Shell Sampling** - Optionally samples only the outer visible surface, excluding internal geometry
 - **Vertex Normal Variance** - Measures angular differences between interpolated surface normals
 - **UV Coordinate Variance** - Measures texture coordinate differences between corresponding points
 - **Automatic Sample Count Computation** - Based on surface area and configurable density
@@ -77,10 +78,12 @@ int main() {
     auto results = compareMeshesBidirectional(
         meshA, meshB, 
         numSamplesA, numSamplesB,
-        45.0,  // max angle for normal matching
-        true,  // use area weighting
-        true,  // use normal filtering
-        42     // random seed
+        45.0,   // max angle for normal matching
+        true,   // use area weighting
+        true,   // use normal filtering
+        42,     // random seed
+        false,  // outer shell only (set to true to exclude internal geometry)
+        2000    // sphere points for outer shell detection
     );
     
     // Print results
@@ -101,7 +104,7 @@ int main() {
 ### Usage
 
 ```bash
-mesh_compare <reference.obj> <test.obj> [sample_density] [max_angle] [seed]
+mesh_compare <reference.obj> <test.obj> [sample_density] [max_angle] [seed] [--outer-shell] [--debug output.obj]
 ```
 
 **Parameters:**
@@ -112,6 +115,12 @@ mesh_compare <reference.obj> <test.obj> [sample_density] [max_angle] [seed]
   - 180.0 effectively disables normal filtering (accepts any orientation)
   - Use smaller values (e.g., 45.0) for stricter normal matching
 - `seed` - Random seed for reproducibility (default: 42)
+
+**Optional Flags:**
+- `--outer-shell` - Only sample triangles on the outer shell, excluding internal geometry
+  - Useful for meshes with internal scaffolding or hidden features
+  - Uses sphere projection to efficiently detect visible surfaces
+- `--debug output.obj` - Export debug visualization with extreme deviation points
 
 **Note:** The CLI tool defaults to `max_angle=180.0` (no normal filtering) for maximum compatibility. The library API function `compareMeshesBidirectional` defaults to `45.0` for stricter matching. Choose based on your needs.
 
@@ -132,6 +141,12 @@ mesh_compare original.obj modified.obj 20 180.0 123
 
 # Low density (still guarantees one sample per triangle)
 mesh_compare original.obj modified.obj 1.0
+
+# Compare only outer shell (exclude internal geometry)
+mesh_compare box_with_internals.obj box_reference.obj 20 180.0 42 --outer-shell
+
+# Outer shell + debug visualization
+mesh_compare complex.obj simple.obj 50 45.0 42 --outer-shell --debug debug_output.obj
 ```
 
 ### Output
@@ -173,9 +188,21 @@ Loads an OBJ file with automatic polygon triangulation.
 double computeMeshSurfaceArea(const Mesh& mesh);
 int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea);
 void computeVertexNormals(Mesh& mesh);  // Compute area-weighted vertex normals
+
+// Outer shell detection
+std::vector<bool> classifyOuterShellTriangles(const Mesh& mesh, int numSpherePoints = 2000);
 ```
 
 Vertex normals are automatically computed from adjacent face normals using area-weighted averaging. This enables the vertex normal variance metric that measures angular differences between surface orientations.
+
+**Outer Shell Detection:**
+The `classifyOuterShellTriangles` function identifies which triangles are part of the mesh's outer visible surface versus internal geometry. It uses an efficient sphere projection technique:
+1. Computes a bounding sphere around the mesh
+2. Generates uniformly distributed points on the sphere surface
+3. Finds the closest triangle to each sphere point
+4. Marks those triangles as part of the outer shell
+
+This is useful for excluding internal scaffolding, support structures, or hidden geometry from comparison.
 
 ### Logging Control
 
@@ -221,10 +248,12 @@ setLogCallback(myLogger);
 DevianceStats compareMeshes(
     const Mesh& meshA, const Mesh& meshB, 
     int numSamples,
-    double maxAngleDegrees = 45.0,
+    double maxAngleDegrees = 180.0,
     bool useAreaWeighting = true,
     bool useNormalFiltering = true,
-    unsigned int seed = 42
+    unsigned int seed = 42,
+    bool outerShellOnly = false,
+    int spherePoints = 2000
 );
 
 BidirectionalDevianceStats compareMeshesBidirectional(
@@ -233,9 +262,15 @@ BidirectionalDevianceStats compareMeshesBidirectional(
     double maxAngleDegrees = 45.0,
     bool useAreaWeighting = true,
     bool useNormalFiltering = true,
-    unsigned int baseSeed = 42
+    unsigned int baseSeed = 42,
+    bool outerShellOnly = false,
+    int spherePoints = 2000
 );
 ```
+
+**New Parameters:**
+- `outerShellOnly` - When true, automatically classifies and samples only outer shell triangles
+- `spherePoints` - Number of sphere points used for outer shell detection (more = more accurate, slower)
 
 ### Output Functions
 
@@ -359,6 +394,8 @@ The project includes GitHub Actions workflows that automatically:
 - **Smoothing analysis** - Measure how smoothing operations affect surface normals
 - **UV unwrapping validation** - Check texture coordinate consistency
 - **Texture atlas changes** - Detect UV mapping modifications
+- **3D printing validation** - Compare models with internal support structures (use outer shell mode)
+- **Assembly validation** - Check external appearance while ignoring internal components
 
 ## License
 

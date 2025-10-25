@@ -187,6 +187,25 @@ int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea);
 void computeVertexNormals(Mesh& mesh);
 
 // ============================================================================
+// Outer Shell Detection
+// ============================================================================
+
+/**
+ * Classify triangles as outer shell (visible from outside) vs internal
+ *
+ * Uses sphere projection: places points on a bounding sphere around the mesh,
+ * finds the closest triangle to each sphere point, and marks those triangles
+ * as part of the outer shell. This efficiently filters out internal geometry
+ * (e.g., scaffolding inside a mesh) without expensive ray casting.
+ *
+ * @param mesh Input mesh to classify
+ * @param numSpherePoints Number of points to generate on bounding sphere (default: 2000)
+ *                        More points = more accurate classification but slower
+ * @return Vector of boolean flags (true = outer shell, false = internal) indexed by triangle
+ */
+std::vector<bool> classifyOuterShellTriangles(const Mesh& mesh, int numSpherePoints = 2000);
+
+// ============================================================================
 // Mesh Comparison
 // ============================================================================
 
@@ -205,10 +224,13 @@ void computeVertexNormals(Mesh& mesh);
  * @param useAreaWeighting If true, distributes samples by triangle area (default: true)
  * @param useNormalFiltering If true, prefers triangles with similar normals (default: true)
  * @param seed Random seed for reproducible sampling (default: 42)
+ * @param outerShellOnly If true, only samples triangles on the outer shell (default: false)
+ * @param spherePoints Number of sphere points for outer shell detection (default: 2000)
  * @return DevianceStats containing distance, normal, and UV statistics
  */
 DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples, double maxAngleDegrees = 180.0,
-                            bool useAreaWeighting = true, bool useNormalFiltering = true, unsigned int seed = 42);
+                            bool useAreaWeighting = true, bool useNormalFiltering = true, unsigned int seed = 42,
+                            bool outerShellOnly = false, int spherePoints = 2000);
 
 /**
  * Compare two meshes bidirectionally (A -> B and B -> A)
@@ -225,11 +247,14 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
  * @param useAreaWeighting If true, distributes samples by triangle area (default: true)
  * @param useNormalFiltering If true, prefers triangles with similar normals (default: true)
  * @param baseSeed Base random seed (uses baseSeed for A->B, baseSeed+1 for B->A) (default: 42)
+ * @param outerShellOnly If true, only samples triangles on the outer shell (default: false)
+ * @param spherePoints Number of sphere points for outer shell detection (default: 2000)
  * @return BidirectionalDevianceStats with results for both directions and combined metrics
  */
 BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const Mesh& meshB, int numSamplesA, int numSamplesB,
                                                       double maxAngleDegrees = 45.0, bool useAreaWeighting = true,
-                                                      bool useNormalFiltering = true, unsigned int baseSeed = 42);
+                                                      bool useNormalFiltering = true, unsigned int baseSeed = 42,
+                                                      bool outerShellOnly = false, int spherePoints = 2000);
 
 // ============================================================================
 // Output Functions

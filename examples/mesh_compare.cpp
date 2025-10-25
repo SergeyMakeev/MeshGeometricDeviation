@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
     }
     
     if (argc < 3) {
-        std::cerr << "\nUsage: " << argv[0] << " <reference_mesh.obj> <test_mesh.obj> [sample_density] [max_angle_degrees] [seed] [--debug output.obj]" << std::endl;
+        std::cerr << "\nUsage: " << argv[0] << " <reference_mesh.obj> <test_mesh.obj> [sample_density] [max_angle_degrees] [seed] [--outer-shell] [--debug output.obj]" << std::endl;
         std::cerr << "       " << argv[0] << " --test-export <input.obj> <output.obj>  (test mesh loading/exporting)" << std::endl;
         std::cerr << "\nArguments:" << std::endl;
         std::cerr << "  reference_mesh.obj   - The reference mesh (MeshA)" << std::endl;
@@ -47,6 +47,9 @@ int main(int argc, char* argv[]) {
         std::cerr << "                         180.0 effectively disables normal filtering (accepts any orientation)" << std::endl;
         std::cerr << "                         Use smaller values (e.g., 45.0) for stricter normal matching" << std::endl;
         std::cerr << "  seed                 - Random seed for reproducible results (default: 42)" << std::endl;
+        std::cerr << "\nOptional Flags:" << std::endl;
+        std::cerr << "  --outer-shell        - Only sample triangles on outer shell (excludes internal geometry)" << std::endl;
+        std::cerr << "                         Useful for meshes with internal scaffolding or hidden features" << std::endl;
         std::cerr << "  --debug output.obj   - Export debug visualization with extreme deviation points" << std::endl;
         std::cerr << "\nTest Mode:" << std::endl;
         std::cerr << "  --test-export        - Load a mesh and export it back to test loading/exporting" << std::endl;
@@ -61,15 +64,19 @@ int main(int argc, char* argv[]) {
     double maxAngleDegrees = (argc > 4) ? std::atof(argv[4]) : 180.0;
     unsigned int seed = (argc > 5) ? static_cast<unsigned int>(std::atoi(argv[5])) : 42;
     
-    // Check for debug flag
+    // Check for optional flags
     std::string debugOutputFile;
     bool exportDebug = false;
-    for (int i = 1; i < argc - 1; i++) {
+    bool outerShellOnly = false;
+    
+    for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--debug" && i + 1 < argc) {
             exportDebug = true;
             debugOutputFile = argv[i + 1];
-            break;
+        }
+        else if (arg == "--outer-shell") {
+            outerShellOnly = true;
         }
     }
     
@@ -139,8 +146,14 @@ int main(int argc, char* argv[]) {
     std::cout << "  Test mesh (B): " << numSamplesB << " samples" << std::endl;
     std::cout << "  Random seed: " << seed << " (for reproducibility)" << std::endl;
     
+    if (outerShellOnly) {
+        std::cout << "\nOuter shell sampling: ENABLED" << std::endl;
+        std::cout << "  Internal triangles will be excluded from sampling" << std::endl;
+    }
+    
     // Compare meshes (always bidirectional)
-    BidirectionalDevianceStats biStats = compareMeshesBidirectional(meshA, meshB, numSamplesA, numSamplesB, maxAngleDegrees, true, true, seed);
+    BidirectionalDevianceStats biStats = compareMeshesBidirectional(meshA, meshB, numSamplesA, numSamplesB, maxAngleDegrees, 
+                                                                     true, true, seed, outerShellOnly);
     printBidirectionalStats(biStats);
     
     // Export debug visualization if requested

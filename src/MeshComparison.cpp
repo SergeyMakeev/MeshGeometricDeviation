@@ -151,21 +151,47 @@ static std::vector<double> computeTriangleAreas(const Mesh& mesh, double& totalA
 
 // Generate area-weighted random samples
 // Ensures each triangle gets at least one sample
-static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, int numSamples, unsigned int seed)
+// Optional triangleFilter: if provided, only samples triangles where filter[i] == true
+static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, int numSamples, unsigned int seed,
+                                                               const std::vector<bool>* triangleFilter = nullptr)
 {
     std::vector<SurfaceSample> samples;
     samples.reserve(numSamples);
 
-    // Compute triangle areas once
+    // Compute triangle areas once (only for filtered triangles if filter provided)
     double totalArea = 0.0;
     std::vector<double> triangleAreas = computeTriangleAreas(mesh, totalArea);
+    
+    // If filtering, recompute total area for filtered triangles only
+    double filteredArea = totalArea;
+    int filteredTriCount = static_cast<int>(mesh.tris.size());
+    
+    if (triangleFilter != nullptr)
+    {
+        filteredArea = 0.0;
+        filteredTriCount = 0;
+        for (size_t i = 0; i < mesh.tris.size(); i++)
+        {
+            if ((*triangleFilter)[i])
+            {
+                filteredArea += triangleAreas[i];
+                filteredTriCount++;
+            }
+        }
+    }
 
     std::mt19937 rng(seed);
 
-    // First pass: Give each triangle at least one sample
+    // First pass: Give each (filtered) triangle at least one sample
     int samplesGenerated = 0;
     for (size_t triIdx = 0; triIdx < mesh.tris.size(); triIdx++)
     {
+        // Skip triangles that are filtered out
+        if (triangleFilter != nullptr && !(*triangleFilter)[triIdx])
+        {
+            continue;
+        }
+        
         samples.push_back(samplePointOnTriangle(mesh, static_cast<unsigned int>(triIdx), rng));
         samplesGenerated++;
     }
@@ -174,11 +200,17 @@ static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, 
     int remainingSamples = numSamples - samplesGenerated;
     if (remainingSamples > 0)
     {
-        double samplesPerUnitArea = remainingSamples / totalArea;
+        double samplesPerUnitArea = remainingSamples / filteredArea;
         double fractionalRemainder = 0.0;
 
         for (size_t triIdx = 0; triIdx < mesh.tris.size(); triIdx++)
         {
+            // Skip triangles that are filtered out
+            if (triangleFilter != nullptr && !(*triangleFilter)[triIdx])
+            {
+                continue;
+            }
+            
             // Calculate exact number of additional samples for this triangle
             double exactSamples = triangleAreas[triIdx] * samplesPerUnitArea + fractionalRemainder;
             int samplesForThisTriangle = static_cast<int>(exactSamples);
@@ -195,11 +227,14 @@ static std::vector<SurfaceSample> generateAreaWeightedSamples(const Mesh& mesh, 
         // Handle any final remaining samples due to rounding
         if (samplesGenerated < numSamples)
         {
-            // Create a list of triangle indices sorted by area (largest first)
-            std::vector<unsigned int> trianglesByArea(mesh.tris.size());
-            for (size_t i = 0; i < trianglesByArea.size(); i++)
+            // Create a list of (filtered) triangle indices sorted by area (largest first)
+            std::vector<unsigned int> trianglesByArea;
+            for (size_t i = 0; i < mesh.tris.size(); i++)
             {
-                trianglesByArea[i] = static_cast<unsigned int>(i);
+                if (triangleFilter == nullptr || (*triangleFilter)[i])
+                {
+                    trianglesByArea.push_back(static_cast<unsigned int>(i));
+                }
             }
             std::sort(trianglesByArea.begin(), trianglesByArea.end(),
                       [&triangleAreas](unsigned int a, unsigned int b) { return triangleAreas[a] > triangleAreas[b]; });
@@ -432,6 +467,133 @@ int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea)
     return numSamples;
 }
 
+// ============================================================================
+// Outer Shell Detection Implementation
+// ============================================================================
+
+// Helper: Compute mesh center (centroid of vertices)
+static Vector3 computeMeshCenter(const Mesh& mesh)
+{
+    Vector3 center(0, 0, 0);
+    
+    // Skip index 0 (fast_obj dummy vertex)
+    for (size_t i = 1; i < mesh.verts.size(); i++)
+    {
+        center.x += mesh.verts[i].x;
+        center.y += mesh.verts[i].y;
+        center.z += mesh.verts[i].z;
+    }
+    
+    double count = static_cast<double>(mesh.verts.size() - 1);
+    if (count > 0)
+    {
+        center.x /= count;
+        center.y /= count;
+        center.z /= count;
+    }
+    
+    return center;
+}
+
+// Helper: Compute bounding sphere radius
+static double computeBoundingSphereRadius(const Mesh& mesh, const Vector3& center)
+{
+    double maxRadiusSq = 0.0;
+    
+    // Skip index 0 (fast_obj dummy vertex)
+    for (size_t i = 1; i < mesh.verts.size(); i++)
+    {
+        Vector3 v = vertexToVector3(mesh.verts[i]);
+        double distSq = (v - center).lengthSquared();
+        if (distSq > maxRadiusSq)
+        {
+            maxRadiusSq = distSq;
+        }
+    }
+    
+    return std::sqrt(maxRadiusSq);
+}
+
+// Helper: Generate uniformly distributed points on a sphere using Fibonacci spiral
+static std::vector<Vector3> generateFibonacciSphere(const Vector3& center, double radius, int numPoints)
+{
+    std::vector<Vector3> points;
+    points.reserve(numPoints);
+    
+    const double phi = (1.0 + std::sqrt(5.0)) / 2.0; // Golden ratio
+    const double angleIncrement = 2.0 * 3.14159265358979323846 / phi;
+    
+    for (int i = 0; i < numPoints; i++)
+    {
+        double t = static_cast<double>(i) / static_cast<double>(numPoints);
+        double inclination = std::acos(1.0 - 2.0 * t);
+        double azimuth = angleIncrement * static_cast<double>(i);
+        
+        double x = std::sin(inclination) * std::cos(azimuth);
+        double y = std::sin(inclination) * std::sin(azimuth);
+        double z = std::cos(inclination);
+        
+        points.push_back(Vector3(
+            center.x + radius * x,
+            center.y + radius * y,
+            center.z + radius * z
+        ));
+    }
+    
+    return points;
+}
+
+// Classify triangles as outer shell (visible from outside) vs internal
+std::vector<bool> classifyOuterShellTriangles(const Mesh& mesh, int numSpherePoints)
+{
+    log(LogLevel::Info, "\n=== Classifying Outer Shell Triangles ===\n");
+    log(LogLevel::Info, "Triangle count: %zu\n", mesh.tris.size());
+    log(LogLevel::Info, "Sphere sample points: %d\n", numSpherePoints);
+    
+    auto t_start = std::chrono::high_resolution_clock::now();
+    
+    // Compute bounding sphere
+    Vector3 center = computeMeshCenter(mesh);
+    double radius = computeBoundingSphereRadius(mesh, center);
+    
+    // Add 10% margin to ensure we're outside the mesh
+    radius *= 1.1;
+    
+    log(LogLevel::Debug, "Mesh center: (%.3f, %.3f, %.3f)\n", center.x, center.y, center.z);
+    log(LogLevel::Debug, "Bounding sphere radius: %.3f\n", radius);
+    
+    // Generate points on sphere
+    std::vector<Vector3> spherePoints = generateFibonacciSphere(center, radius, numSpherePoints);
+    
+    // Build spatial database for queries
+    SpatialDb spatialDb(mesh);
+    
+    // Mark triangles visible from sphere points
+    std::vector<bool> isVisible(mesh.tris.size(), false);
+    int markedCount = 0;
+    
+    for (const Vector3& spherePoint : spherePoints)
+    {
+        auto result = spatialDb.getClosestPointDetailed(spherePoint);
+        if (!isVisible[result.triangleIndex])
+        {
+            isVisible[result.triangleIndex] = true;
+            markedCount++;
+        }
+    }
+    
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double time_classify = std::chrono::duration<double>(t_end - t_start).count();
+    
+    log(LogLevel::Info, "Outer shell triangles: %d / %zu (%.1f%%)\n", 
+        markedCount, mesh.tris.size(), 100.0 * markedCount / mesh.tris.size());
+    log(LogLevel::Info, "Internal triangles: %zu (%.1f%%)\n", 
+        mesh.tris.size() - markedCount, 100.0 * (mesh.tris.size() - markedCount) / mesh.tris.size());
+    log(LogLevel::Debug, "Classification time: %.6f seconds\n", time_classify);
+    
+    return isVisible;
+}
+
 /**
  * Compare two meshes unidirectionally
  *
@@ -446,10 +608,12 @@ int computeNumSamples(const Mesh& mesh, double samplesPerUnitArea)
  * @param useAreaWeighting If true, distributes samples by triangle area (default: true)
  * @param useNormalFiltering If true, prefers triangles with similar normals (default: true)
  * @param seed Random seed for reproducible sampling (default: 42)
+ * @param outerShellOnly If true, only samples triangles on the outer shell (default: false)
+ * @param spherePoints Number of sphere points for outer shell detection (default: 2000)
  * @return DevianceStats containing distance, normal, and UV statistics
  */
 DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples, double maxAngleDegrees, bool useAreaWeighting,
-                            bool useNormalFiltering, unsigned int seed)
+                            bool useNormalFiltering, unsigned int seed, bool outerShellOnly, int spherePoints)
 {
     log(LogLevel::Info, "\n=== Comparing Meshes ===\n");
     log(LogLevel::Info, "Reference mesh: %s (%zu triangles)\n", meshA.name.c_str(), meshA.tris.size());
@@ -462,6 +626,17 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     }
     log(LogLevel::Debug, "Area weighting: %s\n", useAreaWeighting ? "enabled" : "disabled");
     log(LogLevel::Debug, "Random seed: %u (for reproducibility)\n", seed);
+    log(LogLevel::Info, "Outer shell only: %s\n", outerShellOnly ? "enabled" : "disabled");
+    
+    // Classify outer shell triangles if requested
+    std::vector<bool> triangleFilter;
+    const std::vector<bool>* triangleFilterPtr = nullptr;
+    
+    if (outerShellOnly)
+    {
+        triangleFilter = classifyOuterShellTriangles(meshA, spherePoints);
+        triangleFilterPtr = &triangleFilter;
+    }
 
     // Build spatial database for meshB
     log(LogLevel::Info, "\nBuilding spatial database for test mesh...\n");
@@ -481,9 +656,10 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     // Generate samples on meshA
     log(LogLevel::Info, "\nGenerating surface samples on reference mesh...\n");
     auto t_start_sample = std::chrono::high_resolution_clock::now();
-    std::vector<SurfaceSample> samples = generateAreaWeightedSamples(meshA, numSamples, seed);
+    std::vector<SurfaceSample> samples = generateAreaWeightedSamples(meshA, numSamples, seed, triangleFilterPtr);
     auto t_end_sample = std::chrono::high_resolution_clock::now();
     double time_sample = std::chrono::duration<double>(t_end_sample - t_start_sample).count();
+    log(LogLevel::Debug, "  Generated %zu samples\n", samples.size());
     log(LogLevel::Debug, "  Sampling time: %.6f seconds\n", time_sample);
 
     // Check if both meshes have vertex normals for normal variance computation
@@ -825,11 +1001,13 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
  * @param useAreaWeighting If true, distributes samples by triangle area (default: true)
  * @param useNormalFiltering If true, prefers triangles with similar normals (default: true)
  * @param baseSeed Base random seed (uses baseSeed for A->B, baseSeed+1 for B->A) (default: 42)
+ * @param outerShellOnly If true, only samples triangles on the outer shell (default: false)
+ * @param spherePoints Number of sphere points for outer shell detection (default: 2000)
  * @return BidirectionalDevianceStats with results for both directions and combined metrics
  */
 BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const Mesh& meshB, int numSamplesA, int numSamplesB,
                                                       double maxAngleDegrees, bool useAreaWeighting, bool useNormalFiltering,
-                                                      unsigned int baseSeed)
+                                                      unsigned int baseSeed, bool outerShellOnly, int spherePoints)
 {
     BidirectionalDevianceStats biStats;
 
@@ -838,11 +1016,13 @@ BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const M
 
     // Direction 1: A -> B (reference to test)
     log(LogLevel::Info, "\n--- Direction 1: Reference (A) -> Test (B) ---\n");
-    biStats.aToB = compareMeshes(meshA, meshB, numSamplesA, maxAngleDegrees, useAreaWeighting, useNormalFiltering, baseSeed);
+    biStats.aToB = compareMeshes(meshA, meshB, numSamplesA, maxAngleDegrees, useAreaWeighting, useNormalFiltering, baseSeed,
+                                 outerShellOnly, spherePoints);
 
     // Direction 2: B -> A (test to reference)
     log(LogLevel::Info, "\n--- Direction 2: Test (B) -> Reference (A) ---\n");
-    biStats.bToA = compareMeshes(meshB, meshA, numSamplesB, maxAngleDegrees, useAreaWeighting, useNormalFiltering, baseSeed + 1);
+    biStats.bToA = compareMeshes(meshB, meshA, numSamplesB, maxAngleDegrees, useAreaWeighting, useNormalFiltering, baseSeed + 1,
+                                 outerShellOnly, spherePoints);
 
     // Compute overall statistics
     biStats.minDeviance = std::min(biStats.aToB.minDeviance, biStats.bToA.minDeviance);
