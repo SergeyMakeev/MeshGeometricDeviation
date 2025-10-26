@@ -95,7 +95,7 @@ struct DevianceStats
     double minDeviance;
     double maxDeviance;
     double averageDeviance;
-    double medianDeviance;
+    double deviancePercentiles[11]; // p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99
     double rmsd; // Root Mean Square Deviation
     int totalSamples;
     int normalMatchedCount;
@@ -106,14 +106,14 @@ struct DevianceStats
     double minNormalAngleDeg;     // Minimum angle between normals (degrees)
     double maxNormalAngleDeg;     // Maximum angle between normals (degrees)
     double averageNormalAngleDeg; // Average angle between normals (degrees)
-    double medianNormalAngleDeg;  // Median angle between normals (degrees)
+    double normalAnglePercentiles[11]; // p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99 (degrees)
     int largeNormalDevianceCount; // Count of samples with angle > 15 degrees
 
     // UV variance metrics
     double minUVDistance;     // Minimum distance between UV coordinates
     double maxUVDistance;     // Maximum distance between UV coordinates
     double averageUVDistance; // Average distance between UV coordinates
-    double medianUVDistance;  // Median distance between UV coordinates
+    double uvDistancePercentiles[11]; // p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99
     int largeUVDevianceCount; // Count of samples with UV distance > 0.1
 
     // Extreme cases for debug visualization
@@ -263,7 +263,7 @@ BidirectionalDevianceStats compareMeshesBidirectional(const Mesh& meshA, const M
 /**
  * Print deviance statistics to console
  *
- * Displays min/max/average/median distance, RMSD, normal variance, UV variance,
+ * Displays min/max/average/percentiles distance, RMSD, normal variance, UV variance,
  * and large deviation counts.
  *
  * @param stats Deviance statistics to print

@@ -159,14 +159,16 @@ The tool provides comprehensive statistics:
   - Min deviance (smallest distance found)
   - Max deviance (largest distance found)
   - Average deviance (mean distance)
-  - Median deviance (50th percentile distance)
+  - Percentiles (p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99)
   - RMSD (Root Mean Square Deviation - emphasizes larger errors)
 - **Vertex Normal Variance** - Angular differences between interpolated vertex normals:
-  - Min/max/average/median angles between normals
+  - Min/max/average angles between normals
+  - Percentiles for angles (p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99)
   - Count of samples with large normal deviations (>15 deg)
   - Detects surface orientation changes even when positions are close
 - **UV Coordinate Variance** - Distance between interpolated UV coordinates:
-  - Min/max/average/median UV distances
+  - Min/max/average UV distances
+  - Percentiles for UV distances (p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99)
   - Count of samples with large UV deviations (>0.1)
   - Detects texture mapping changes and seam issues
 - **Asymmetry analysis** - Detects if deviations are symmetric or indicate holes/extra geometry

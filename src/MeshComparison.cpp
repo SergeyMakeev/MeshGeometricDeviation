@@ -78,6 +78,40 @@ void log(LogLevel level, const char* format, ...)
 // Helper to convert Vertex to Vector3
 inline Vector3 vertexToVector3(const Vertex& v) { return Vector3(v.x, v.y, v.z); }
 
+// Helper to calculate percentiles from sorted data
+static void calculatePercentiles(const std::vector<double>& sortedData, double percentiles[11])
+{
+    if (sortedData.empty())
+    {
+        for (int i = 0; i < 11; i++)
+        {
+            percentiles[i] = 0.0;
+        }
+        return;
+    }
+
+    // Calculate p10, p20, p30, p40, p50, p60, p70, p80, p90, p95, p99
+    const double percentileValues[11] = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 95.0, 99.0};
+    
+    for (int i = 0; i < 11; i++)
+    {
+        double percentile = percentileValues[i];
+        double position = (percentile / 100.0) * (sortedData.size() - 1);
+        int lowerIndex = static_cast<int>(std::floor(position));
+        int upperIndex = static_cast<int>(std::ceil(position));
+        
+        if (lowerIndex == upperIndex)
+        {
+            percentiles[i] = sortedData[lowerIndex];
+        }
+        else
+        {
+            double fraction = position - lowerIndex;
+            percentiles[i] = sortedData[lowerIndex] * (1.0 - fraction) + sortedData[upperIndex] * fraction;
+        }
+    }
+}
+
 // Surface sample (internal structure)
 struct SurfaceSample
 {
@@ -886,17 +920,10 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
     devianceStats.averageDeviance = sum / numSamples;
     devianceStats.rmsd = std::sqrt(sumSquares / numSamples);
 
-    // Median deviance
+    // Calculate percentiles for deviance
     std::vector<double> sortedDistances = distances;
     std::sort(sortedDistances.begin(), sortedDistances.end());
-    if (numSamples % 2 == 0)
-    {
-        devianceStats.medianDeviance = (sortedDistances[numSamples / 2 - 1] + sortedDistances[numSamples / 2]) * 0.5;
-    }
-    else
-    {
-        devianceStats.medianDeviance = sortedDistances[numSamples / 2];
-    }
+    calculatePercentiles(sortedDistances, devianceStats.deviancePercentiles);
 
     // Compute normal variance statistics if available
     if (hasVertexNormals && !normalAngles.empty())
@@ -913,14 +940,7 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
 
         std::vector<double> sortedAngles = normalAngles;
         std::sort(sortedAngles.begin(), sortedAngles.end());
-        if (normalAngles.size() % 2 == 0)
-        {
-            devianceStats.medianNormalAngleDeg = (sortedAngles[normalAngles.size() / 2 - 1] + sortedAngles[normalAngles.size() / 2]) * 0.5;
-        }
-        else
-        {
-            devianceStats.medianNormalAngleDeg = sortedAngles[normalAngles.size() / 2];
-        }
+        calculatePercentiles(sortedAngles, devianceStats.normalAnglePercentiles);
     }
     else
     {
@@ -928,7 +948,10 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         devianceStats.minNormalAngleDeg = 0.0;
         devianceStats.maxNormalAngleDeg = 0.0;
         devianceStats.averageNormalAngleDeg = 0.0;
-        devianceStats.medianNormalAngleDeg = 0.0;
+        for (int i = 0; i < 11; i++)
+        {
+            devianceStats.normalAnglePercentiles[i] = 0.0;
+        }
     }
 
     // Compute UV variance statistics if available
@@ -947,14 +970,7 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
 
         std::vector<double> sortedUVs = uvDistances;
         std::sort(sortedUVs.begin(), sortedUVs.end());
-        if (sortedUVs.size() % 2 == 0)
-        {
-            devianceStats.medianUVDistance = (sortedUVs[sortedUVs.size() / 2 - 1] + sortedUVs[sortedUVs.size() / 2]) * 0.5;
-        }
-        else
-        {
-            devianceStats.medianUVDistance = sortedUVs[sortedUVs.size() / 2];
-        }
+        calculatePercentiles(sortedUVs, devianceStats.uvDistancePercentiles);
     }
     else
     {
@@ -962,7 +978,10 @@ DevianceStats compareMeshes(const Mesh& meshA, const Mesh& meshB, int numSamples
         devianceStats.minUVDistance = 0.0;
         devianceStats.maxUVDistance = 0.0;
         devianceStats.averageUVDistance = 0.0;
-        devianceStats.medianUVDistance = 0.0;
+        for (int i = 0; i < 11; i++)
+        {
+            devianceStats.uvDistancePercentiles[i] = 0.0;
+        }
     }
 
     // Store extreme cases for debug visualization
@@ -1060,7 +1079,18 @@ void printDevianceStats(const DevianceStats& stats, bool showNormalStats)
     log(LogLevel::Info, "Min deviance:     %g\n", stats.minDeviance);
     log(LogLevel::Info, "Max deviance:     %g\n", stats.maxDeviance);
     log(LogLevel::Info, "Average deviance: %g\n", stats.averageDeviance);
-    log(LogLevel::Info, "Median deviance:  %g\n", stats.medianDeviance);
+    log(LogLevel::Info, "Percentiles:\n");
+    log(LogLevel::Info, "  p10: %g\n", stats.deviancePercentiles[0]);
+    log(LogLevel::Info, "  p20: %g\n", stats.deviancePercentiles[1]);
+    log(LogLevel::Info, "  p30: %g\n", stats.deviancePercentiles[2]);
+    log(LogLevel::Info, "  p40: %g\n", stats.deviancePercentiles[3]);
+    log(LogLevel::Info, "  p50: %g\n", stats.deviancePercentiles[4]);
+    log(LogLevel::Info, "  p60: %g\n", stats.deviancePercentiles[5]);
+    log(LogLevel::Info, "  p70: %g\n", stats.deviancePercentiles[6]);
+    log(LogLevel::Info, "  p80: %g\n", stats.deviancePercentiles[7]);
+    log(LogLevel::Info, "  p90: %g\n", stats.deviancePercentiles[8]);
+    log(LogLevel::Info, "  p95: %g\n", stats.deviancePercentiles[9]);
+    log(LogLevel::Info, "  p99: %g\n", stats.deviancePercentiles[10]);
     log(LogLevel::Info, "RMSD:             %g\n", stats.rmsd);
 
     if (showNormalStats && stats.fallbackCount >= 0)
@@ -1082,7 +1112,18 @@ void printDevianceStats(const DevianceStats& stats, bool showNormalStats)
         log(LogLevel::Info, "  Min angle:     %g degrees\n", stats.minNormalAngleDeg);
         log(LogLevel::Info, "  Max angle:     %g degrees\n", stats.maxNormalAngleDeg);
         log(LogLevel::Info, "  Average angle: %g degrees\n", stats.averageNormalAngleDeg);
-        log(LogLevel::Info, "  Median angle:  %g degrees\n", stats.medianNormalAngleDeg);
+        log(LogLevel::Info, "  Percentiles (degrees):\n");
+        log(LogLevel::Info, "    p10: %g\n", stats.normalAnglePercentiles[0]);
+        log(LogLevel::Info, "    p20: %g\n", stats.normalAnglePercentiles[1]);
+        log(LogLevel::Info, "    p30: %g\n", stats.normalAnglePercentiles[2]);
+        log(LogLevel::Info, "    p40: %g\n", stats.normalAnglePercentiles[3]);
+        log(LogLevel::Info, "    p50: %g\n", stats.normalAnglePercentiles[4]);
+        log(LogLevel::Info, "    p60: %g\n", stats.normalAnglePercentiles[5]);
+        log(LogLevel::Info, "    p70: %g\n", stats.normalAnglePercentiles[6]);
+        log(LogLevel::Info, "    p80: %g\n", stats.normalAnglePercentiles[7]);
+        log(LogLevel::Info, "    p90: %g\n", stats.normalAnglePercentiles[8]);
+        log(LogLevel::Info, "    p95: %g\n", stats.normalAnglePercentiles[9]);
+        log(LogLevel::Info, "    p99: %g\n", stats.normalAnglePercentiles[10]);
         log(LogLevel::Info, "  Large normal deviations (>15 deg): %d samples (%.2f%%)\n", stats.largeNormalDevianceCount,
             100.0f * stats.largeNormalDevianceCount / stats.totalSamples);
     }
@@ -1104,14 +1145,36 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats)
     log(LogLevel::Info, "  Min deviance:     %g\n", biStats.aToB.minDeviance);
     log(LogLevel::Info, "  Max deviance:     %g\n", biStats.aToB.maxDeviance);
     log(LogLevel::Info, "  Average deviance: %g\n", biStats.aToB.averageDeviance);
-    log(LogLevel::Info, "  Median deviance:  %g\n", biStats.aToB.medianDeviance);
+    log(LogLevel::Info, "  Percentiles:\n");
+    log(LogLevel::Info, "    p10: %g\n", biStats.aToB.deviancePercentiles[0]);
+    log(LogLevel::Info, "    p20: %g\n", biStats.aToB.deviancePercentiles[1]);
+    log(LogLevel::Info, "    p30: %g\n", biStats.aToB.deviancePercentiles[2]);
+    log(LogLevel::Info, "    p40: %g\n", biStats.aToB.deviancePercentiles[3]);
+    log(LogLevel::Info, "    p50: %g\n", biStats.aToB.deviancePercentiles[4]);
+    log(LogLevel::Info, "    p60: %g\n", biStats.aToB.deviancePercentiles[5]);
+    log(LogLevel::Info, "    p70: %g\n", biStats.aToB.deviancePercentiles[6]);
+    log(LogLevel::Info, "    p80: %g\n", biStats.aToB.deviancePercentiles[7]);
+    log(LogLevel::Info, "    p90: %g\n", biStats.aToB.deviancePercentiles[8]);
+    log(LogLevel::Info, "    p95: %g\n", biStats.aToB.deviancePercentiles[9]);
+    log(LogLevel::Info, "    p99: %g\n", biStats.aToB.deviancePercentiles[10]);
     log(LogLevel::Info, "  RMSD:             %g\n", biStats.aToB.rmsd);
 
     log(LogLevel::Info, "\nTest -> Reference (B -> A):\n");
     log(LogLevel::Info, "  Min deviance:     %g\n", biStats.bToA.minDeviance);
     log(LogLevel::Info, "  Max deviance:     %g\n", biStats.bToA.maxDeviance);
     log(LogLevel::Info, "  Average deviance: %g\n", biStats.bToA.averageDeviance);
-    log(LogLevel::Info, "  Median deviance:  %g\n", biStats.bToA.medianDeviance);
+    log(LogLevel::Info, "  Percentiles:\n");
+    log(LogLevel::Info, "    p10: %g\n", biStats.bToA.deviancePercentiles[0]);
+    log(LogLevel::Info, "    p20: %g\n", biStats.bToA.deviancePercentiles[1]);
+    log(LogLevel::Info, "    p30: %g\n", biStats.bToA.deviancePercentiles[2]);
+    log(LogLevel::Info, "    p40: %g\n", biStats.bToA.deviancePercentiles[3]);
+    log(LogLevel::Info, "    p50: %g\n", biStats.bToA.deviancePercentiles[4]);
+    log(LogLevel::Info, "    p60: %g\n", biStats.bToA.deviancePercentiles[5]);
+    log(LogLevel::Info, "    p70: %g\n", biStats.bToA.deviancePercentiles[6]);
+    log(LogLevel::Info, "    p80: %g\n", biStats.bToA.deviancePercentiles[7]);
+    log(LogLevel::Info, "    p90: %g\n", biStats.bToA.deviancePercentiles[8]);
+    log(LogLevel::Info, "    p95: %g\n", biStats.bToA.deviancePercentiles[9]);
+    log(LogLevel::Info, "    p99: %g\n", biStats.bToA.deviancePercentiles[10]);
     log(LogLevel::Info, "  RMSD:             %g\n", biStats.bToA.rmsd);
 
     log(LogLevel::Info, "\nOverall (Symmetric Hausdorff-like):\n");
@@ -1159,7 +1222,18 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats)
             log(LogLevel::Info, "  Min angle:     %g degrees\n", biStats.aToB.minNormalAngleDeg);
             log(LogLevel::Info, "  Max angle:     %g degrees\n", biStats.aToB.maxNormalAngleDeg);
             log(LogLevel::Info, "  Average angle: %g degrees\n", biStats.aToB.averageNormalAngleDeg);
-            log(LogLevel::Info, "  Median angle:  %g degrees\n", biStats.aToB.medianNormalAngleDeg);
+            log(LogLevel::Info, "  Percentiles (degrees):\n");
+            log(LogLevel::Info, "    p10: %g\n", biStats.aToB.normalAnglePercentiles[0]);
+            log(LogLevel::Info, "    p20: %g\n", biStats.aToB.normalAnglePercentiles[1]);
+            log(LogLevel::Info, "    p30: %g\n", biStats.aToB.normalAnglePercentiles[2]);
+            log(LogLevel::Info, "    p40: %g\n", biStats.aToB.normalAnglePercentiles[3]);
+            log(LogLevel::Info, "    p50: %g\n", biStats.aToB.normalAnglePercentiles[4]);
+            log(LogLevel::Info, "    p60: %g\n", biStats.aToB.normalAnglePercentiles[5]);
+            log(LogLevel::Info, "    p70: %g\n", biStats.aToB.normalAnglePercentiles[6]);
+            log(LogLevel::Info, "    p80: %g\n", biStats.aToB.normalAnglePercentiles[7]);
+            log(LogLevel::Info, "    p90: %g\n", biStats.aToB.normalAnglePercentiles[8]);
+            log(LogLevel::Info, "    p95: %g\n", biStats.aToB.normalAnglePercentiles[9]);
+            log(LogLevel::Info, "    p99: %g\n", biStats.aToB.normalAnglePercentiles[10]);
             log(LogLevel::Debug, "  Large deviations (>15 deg): %d samples (%.2f%%)\n", biStats.aToB.largeNormalDevianceCount,
                 100.0 * biStats.aToB.largeNormalDevianceCount / biStats.aToB.totalSamples);
         }
@@ -1170,7 +1244,18 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats)
             log(LogLevel::Info, "  Min angle:     %g degrees\n", biStats.bToA.minNormalAngleDeg);
             log(LogLevel::Info, "  Max angle:     %g degrees\n", biStats.bToA.maxNormalAngleDeg);
             log(LogLevel::Info, "  Average angle: %g degrees\n", biStats.bToA.averageNormalAngleDeg);
-            log(LogLevel::Info, "  Median angle:  %g degrees\n", biStats.bToA.medianNormalAngleDeg);
+            log(LogLevel::Info, "  Percentiles (degrees):\n");
+            log(LogLevel::Info, "    p10: %g\n", biStats.bToA.normalAnglePercentiles[0]);
+            log(LogLevel::Info, "    p20: %g\n", biStats.bToA.normalAnglePercentiles[1]);
+            log(LogLevel::Info, "    p30: %g\n", biStats.bToA.normalAnglePercentiles[2]);
+            log(LogLevel::Info, "    p40: %g\n", biStats.bToA.normalAnglePercentiles[3]);
+            log(LogLevel::Info, "    p50: %g\n", biStats.bToA.normalAnglePercentiles[4]);
+            log(LogLevel::Info, "    p60: %g\n", biStats.bToA.normalAnglePercentiles[5]);
+            log(LogLevel::Info, "    p70: %g\n", biStats.bToA.normalAnglePercentiles[6]);
+            log(LogLevel::Info, "    p80: %g\n", biStats.bToA.normalAnglePercentiles[7]);
+            log(LogLevel::Info, "    p90: %g\n", biStats.bToA.normalAnglePercentiles[8]);
+            log(LogLevel::Info, "    p95: %g\n", biStats.bToA.normalAnglePercentiles[9]);
+            log(LogLevel::Info, "    p99: %g\n", biStats.bToA.normalAnglePercentiles[10]);
             log(LogLevel::Debug, "  Large deviations (>15 deg): %d samples (%.2f%%)\n", biStats.bToA.largeNormalDevianceCount,
                 100.0 * biStats.bToA.largeNormalDevianceCount / biStats.bToA.totalSamples);
         }
@@ -1187,7 +1272,18 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats)
             log(LogLevel::Info, "  Min UV distance:     %g\n", biStats.aToB.minUVDistance);
             log(LogLevel::Info, "  Max UV distance:     %g\n", biStats.aToB.maxUVDistance);
             log(LogLevel::Info, "  Average UV distance: %g\n", biStats.aToB.averageUVDistance);
-            log(LogLevel::Info, "  Median UV distance:  %g\n", biStats.aToB.medianUVDistance);
+            log(LogLevel::Info, "  Percentiles:\n");
+            log(LogLevel::Info, "    p10: %g\n", biStats.aToB.uvDistancePercentiles[0]);
+            log(LogLevel::Info, "    p20: %g\n", biStats.aToB.uvDistancePercentiles[1]);
+            log(LogLevel::Info, "    p30: %g\n", biStats.aToB.uvDistancePercentiles[2]);
+            log(LogLevel::Info, "    p40: %g\n", biStats.aToB.uvDistancePercentiles[3]);
+            log(LogLevel::Info, "    p50: %g\n", biStats.aToB.uvDistancePercentiles[4]);
+            log(LogLevel::Info, "    p60: %g\n", biStats.aToB.uvDistancePercentiles[5]);
+            log(LogLevel::Info, "    p70: %g\n", biStats.aToB.uvDistancePercentiles[6]);
+            log(LogLevel::Info, "    p80: %g\n", biStats.aToB.uvDistancePercentiles[7]);
+            log(LogLevel::Info, "    p90: %g\n", biStats.aToB.uvDistancePercentiles[8]);
+            log(LogLevel::Info, "    p95: %g\n", biStats.aToB.uvDistancePercentiles[9]);
+            log(LogLevel::Info, "    p99: %g\n", biStats.aToB.uvDistancePercentiles[10]);
             log(LogLevel::Debug, "  Large deviations (>0.1): %d samples (%.2f%%)\n", biStats.aToB.largeUVDevianceCount,
                 100.0 * biStats.aToB.largeUVDevianceCount / biStats.aToB.totalSamples);
         }
@@ -1198,7 +1294,18 @@ void printBidirectionalStats(const BidirectionalDevianceStats& biStats)
             log(LogLevel::Info, "  Min UV distance:     %g\n", biStats.bToA.minUVDistance);
             log(LogLevel::Info, "  Max UV distance:     %g\n", biStats.bToA.maxUVDistance);
             log(LogLevel::Info, "  Average UV distance: %g\n", biStats.bToA.averageUVDistance);
-            log(LogLevel::Info, "  Median UV distance:  %g\n", biStats.bToA.medianUVDistance);
+            log(LogLevel::Info, "  Percentiles:\n");
+            log(LogLevel::Info, "    p10: %g\n", biStats.bToA.uvDistancePercentiles[0]);
+            log(LogLevel::Info, "    p20: %g\n", biStats.bToA.uvDistancePercentiles[1]);
+            log(LogLevel::Info, "    p30: %g\n", biStats.bToA.uvDistancePercentiles[2]);
+            log(LogLevel::Info, "    p40: %g\n", biStats.bToA.uvDistancePercentiles[3]);
+            log(LogLevel::Info, "    p50: %g\n", biStats.bToA.uvDistancePercentiles[4]);
+            log(LogLevel::Info, "    p60: %g\n", biStats.bToA.uvDistancePercentiles[5]);
+            log(LogLevel::Info, "    p70: %g\n", biStats.bToA.uvDistancePercentiles[6]);
+            log(LogLevel::Info, "    p80: %g\n", biStats.bToA.uvDistancePercentiles[7]);
+            log(LogLevel::Info, "    p90: %g\n", biStats.bToA.uvDistancePercentiles[8]);
+            log(LogLevel::Info, "    p95: %g\n", biStats.bToA.uvDistancePercentiles[9]);
+            log(LogLevel::Info, "    p99: %g\n", biStats.bToA.uvDistancePercentiles[10]);
             log(LogLevel::Debug, "  Large deviations (>0.1): %d samples (%.2f%%)\n", biStats.bToA.largeUVDevianceCount,
                 100.0 * biStats.bToA.largeUVDevianceCount / biStats.bToA.totalSamples);
         }
