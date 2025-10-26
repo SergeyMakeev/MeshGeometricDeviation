@@ -119,6 +119,54 @@ When finding the closest point, we can optionally prefer points where surfaces a
 - Meshes have thin walls or overlapping surfaces
 - You want to match "front to front" not "front to back"
 
+### Outer Shell Detection (Optional)
+
+Many 3D meshes have internal geometry that isn't visible from the outside - like scaffolding, support structures, or hidden internal details. The **outer shell mode** filters these out.
+
+#### How It Works
+
+1. **Create a Bounding Sphere**: Draw an imaginary sphere around the entire mesh
+2. **Generate Sample Points**: Place ~2000 points evenly distributed on this sphere's surface
+3. **Ray Detection**: From each sphere point, find the closest triangle on the mesh
+4. **Mark as Outer Shell**: Triangles that are "seen" from the sphere are part of the outer shell
+5. **Filter Sampling**: Only sample from outer shell triangles
+
+**Think of it like this:** Imagine shining flashlights from all directions around your mesh. Only the triangles that get hit by light are part of the outer shell.
+
+#### Why Use Outer Shell Mode?
+
+**Better comparisons** when you care about the visible silhouette:
+
+- **3D Printing Models**: Internal support structures don't matter for visual comparison
+- **Game Assets**: Only the visible surface affects what players see
+- **Architectural Models**: Interior scaffolding shouldn't affect exterior comparisons
+- **Simplified Meshes**: Often only the outer shape matters, not internal topology
+
+**Example Problem Without Outer Shell Mode:**
+
+Imagine two meshes of a hollow cube:
+- Mesh A: Clean hollow cube with just outer walls
+- Mesh B: Same outer walls, but has internal cross-bracing for structural support
+
+**Without outer shell mode:**
+- Algorithm samples internal cross-bracing in Mesh B
+- Those points find matches on Mesh A's inner walls
+- Result shows large differences even though exteriors are identical!
+
+**With outer shell mode:**
+- Algorithm only samples the outer cube faces
+- Internal bracing is ignored
+- Result correctly shows the meshes are identical from outside
+
+#### When NOT to Use Outer Shell Mode
+
+- **Closed objects where interior matters** (like medical scans)
+- **Thin shells** where you need to compare both sides
+- **Meshes with intentional internal details** you want to verify
+- **Hollow objects** where the inside surface is important
+
+The outer shell detection is fast (using spatial queries) and doesn't require manual marking of triangles - it automatically figures out what's visible from the outside.
+
 ## The Output
 
 The tool tells you:
@@ -146,8 +194,13 @@ The tool tells you:
 - **LOD verification**: Check if lower-detail versions maintain shape accuracy
 - **Bug detection**: Find where mesh processing introduced errors
 - **Version comparison**: See what changed between two versions of a model
+- **Silhouette comparison**: Use outer shell mode to compare only visible exterior surfaces
+- **3D printing verification**: Check if print models match originals (outer shell only)
+- **Game asset optimization**: Verify simplified models look the same from outside
 
-## Simple Example
+## Simple Examples
+
+### Example 1: Coffee Cup Comparison
 
 Imagine comparing two 3D models of a coffee cup:
 
@@ -161,6 +214,26 @@ Imagine comparing two 3D models of a coffee cup:
    - Max = 2.000 units → worst case is the handle is 2 units off
 
 From this we learn: The cups are very similar overall, but there's one area (probably the handle) that's quite different.
+
+### Example 2: Architectural Model with Outer Shell Mode
+
+Imagine comparing two 3D models of a building:
+- **Building A**: Clean exterior walls only
+- **Building B**: Same exterior walls + internal floor supports and beams
+
+**Without outer shell mode:**
+- Samples internal beams in Building B
+- Those beams have no match on Building A
+- Reports large differences: "p99 = 5.0 meters" (distance to nearest wall)
+- Result: "Buildings are very different!" ❌ (Wrong - exteriors match!)
+
+**With outer shell mode:**
+- Only samples the exterior walls on both buildings
+- Internal structure is completely ignored
+- Reports small differences: "p99 = 0.01 meters"
+- Result: "Buildings are identical from outside!" ✓ (Correct!)
+
+**Why it matters:** For architectural visualization, game environments, or 3D printing, you often only care if it *looks* the same from the outside. The internal structure is irrelevant to the comparison.
 
 ## Summary
 
